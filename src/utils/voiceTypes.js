@@ -1,0 +1,25 @@
+// Shared voice type presets aligned with backend utils/voice_types.py
+export const VOICE_TYPES = [
+  "conversational",
+  "narrative",
+  "dramatic",
+  "whispering",
+  "shouting",
+  "cheerful",
+  "sad",
+  "excited",
+  "friendly",
+  "assistant",
+  "radio",
+  "child",
+  "teen",
+  "young_adult",
+  "middle_aged",
+  "elderly",
+  "serious",
+  "empathetic",
+  "angry",
+  "fearful",
+  "hopeful",
+  "poetic"
+];
