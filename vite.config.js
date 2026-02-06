@@ -18,6 +18,6 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    allowedHosts: "caterina-nonshattering-hae.ngrok-free.dev"
+    allowedHosts: "*"
   }
 });

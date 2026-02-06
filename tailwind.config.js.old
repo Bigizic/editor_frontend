@@ -1,0 +1,30 @@
+/** @type {import('tailwindcss').Config} */
+export default {
+  content: [
+    "./index.html",
+    "./src/**/*.{js,ts,jsx,tsx}",
+  ],
+  theme: {
+    extend: {
+      colors: {
+        editor: {
+          bg: 'var(--editor-bg)',
+          card: 'var(--editor-card-bg)',
+          border: 'var(--editor-border)',
+          'border-light': 'var(--editor-border-light)', // inferred from DubbingTimeline.css
+          text: 'var(--editor-text)',
+          'text-secondary': 'var(--editor-text-secondary)', // inferred from DubbingTimeline.css
+          muted: 'var(--editor-text-muted)',
+          accent: 'var(--editor-accent)',
+          'accent-bg': 'var(--editor-accent-bg)',
+          input: 'var(--editor-input-bg)',
+          wave: 'var(--editor-wave)',
+          'wave-progress': 'var(--editor-wave-progress)',
+          'bg-subtle': 'var(--editor-bg-subtle)', // inferred
+          'bg-canvas': 'var(--editor-bg-canvas)', // inferred
+        }
+      }
+    },
+  },
+  plugins: [],
+}

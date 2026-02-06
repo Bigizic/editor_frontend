@@ -1,0 +1,365 @@
+/* Main Card Container */
+.dubbing-timeline-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--editor-bg);
+  border: 1px solid var(--editor-border);
+  border-radius: 8px;
+  overflow: hidden;
+  position: relative;
+  flex: 1;
+  /* Occupy remaining space instead of fixed 100% */
+  height: auto;
+  /* Allow flex to dictate height */
+  min-height: 0;
+  /* Fix for Chrome flex child expansion */
+  max-height: 700px;
+  font-family: 'Inter', sans-serif;
+  user-select: none;
+}
+
+.dubbing-timeline {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+/* --- LEFT SIDEBAR --- */
+.timeline-sidebar {
+  width: 240px;
+  /* Slightly wider for controls */
+  flex-shrink: 0;
+  border-right: 1px solid var(--editor-border-light);
+  background: var(--editor-bg-subtle);
+  display: flex;
+  flex-direction: column;
+  z-index: 20;
+  box-shadow: 2px 0 5px rgba(0, 0, 0, 0.03);
+}
+
+.sidebar-header {
+  height: 32px;
+  /* Matches Ruler Height */
+  border-bottom: 1px solid var(--editor-border-light);
+  background: var(--editor-bg);
+  display: flex;
+  align-items: center;
+  padding-left: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--editor-text-muted);
+  text-transform: uppercase;
+}
+
+.sidebar-track {
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--editor-border-light);
+  background: var(--editor-card-bg);
+  /* Height will match track-lane height dynamically or fixed */
+  height: 80px;
+  transition: background-color 0.2s;
+}
+
+.sidebar-track.selected {
+  background: var(--editor-accent-bg);
+  border-left: 3px solid var(--editor-accent);
+}
+
+.sidebar-track.background-track {
+  height: 60px;
+  /* shorter for background */
+  background: #f8fafc;
+}
+
+.sidebar-track-content {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  gap: 4px;
+}
+
+.track-info-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.track-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--editor-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.track-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.control-btn {
+  background: transparent;
+  border: none;
+  color: var(--editor-text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.control-btn:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--editor-text);
+}
+
+.control-btn.active {
+  color: var(--editor-accent);
+  background: var(--editor-accent-bg);
+}
+
+.volume-slider-container {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.volume-slider {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  appearance: none;
+  -webkit-appearance: none;
+  background: #e2e8f0;
+}
+
+.volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--editor-text-muted);
+  cursor: pointer;
+}
+
+/* --- RIGHT TIMELINE CONTENT --- */
+.timeline-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  background: #232323;
+  /* Darker bg for contrast if desired, or keep light */
+  background: var(--editor-bg-canvas);
+  min-width: 0;
+  /* Important for nested flex scroll */
+}
+
+/* Ruler */
+.timeline-ruler-wrapper {
+  height: 32px;
+  width: 100%;
+  border-bottom: 1px solid var(--editor-border-light);
+  background: var(--editor-bg);
+  position: relative;
+  overflow: hidden;
+  cursor: ew-resize;
+  /* Indicates scrubbing */
+  user-select: none;
+}
+
+.timeline-ruler-ticks {
+  height: 100%;
+  position: relative;
+  pointer-events: none;
+  /* Let drag events pass to wrapper */
+}
+
+.ruler-tick {
+  position: absolute;
+  bottom: 0;
+  border-left: 1px solid #cbd5e1;
+  font-size: 9px;
+  color: #64748b;
+  padding-left: 2px;
+  pointer-events: none;
+}
+
+.ruler-tick.major {
+  height: 12px;
+  border-left-color: #94a3b8;
+  font-weight: 600;
+}
+
+.ruler-tick.minor {
+  height: 6px;
+}
+
+/* Tracks Container */
+.timeline-tracks-scrollable {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: scroll;
+  /* We manage X scroll manually or via native scroll? Native is smoother */
+  position: relative;
+  /* Hide scrollbar for cleaner look? */
+}
+
+/* Track Lane styling matching Sidebar height */
+.track-lane {
+  position: relative;
+  border-bottom: 1px solid var(--editor-border-light);
+  height: 80px;
+  background: var(--editor-bg);
+  width: 100%;
+  /* Will become dynamic width based on zoom */
+  /* alternating colors or just subtle lines */
+}
+
+.track-lane:nth-child(even) {
+  background: rgba(255, 255, 255, 0.4);
+}
+
+.track-lane.background-track {
+  height: 60px;
+  background: #f8fafc;
+}
+
+/* SEGMENT PILLS (The "Clips") */
+.segment-clip {
+  position: absolute;
+  top: 6px;
+  height: 30px;
+  /* Top row */
+  border-radius: 6px;
+  padding: 0 8px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  font-size: 10px;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+
+.segment-clip:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+  z-index: 5;
+}
+
+.segment-clip.original {
+  top: 8px;
+  height: 28px;
+  background-color: #fce7f3;
+  /* Pink-100 */
+  border-color: #fbcfe8;
+  /* Pink-200 */
+  color: #9d174d;
+  /* Pink-800 */
+}
+
+.segment-clip.original .clip-label {
+  opacity: 0.7;
+  margin-right: 6px;
+  font-weight: 600;
+  font-size: 8px;
+  text-transform: uppercase;
+}
+
+.segment-clip.dubbed {
+  top: 40px;
+  /* Second row */
+  height: 28px;
+  background-color: #F9A8D4;
+  /* Soft Pink (User Request) */
+  border: 1px solid #f472b6;
+  color: #831843;
+  z-index: 2;
+}
+
+/* Speaker 2 Colors */
+.segment-clip.speaker-2.original {
+  background-color: #e0f2fe;
+  /* Sky-100 */
+  border-color: #bae6fd;
+  color: #0c4a6e;
+}
+
+.segment-clip.speaker-2.dubbed {
+  background-color: #93C5FD;
+  /* Sky Blue (User Request) */
+  border: 1px solid #60a5fa;
+  color: #1e3a8a;
+}
+
+.segment-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+
+/* PLAYHEAD */
+.playhead-container {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 50;
+  pointer-events: none;
+  width: 0;
+}
+
+.playhead-line {
+  position: absolute;
+  left: 0;
+  /* Centered on the translateX */
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background-color: #ef4444;
+  transform: translateX(-50%);
+}
+
+.playhead-triangle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 8px solid #ef4444;
+  /* Inverted triangle pointing down? Or regular on top? Usually pointing down from ruler */
+  transform: translateX(-50%);
+}
+
+.scrub-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 9999;
+  cursor: ew-resize;
+  /* background: rgba(0,0,0,0.1); Debugging */
+  display: none;
+}
+
+.scrub-overlay.active {
+  display: block;
+}

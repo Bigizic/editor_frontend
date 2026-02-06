@@ -99,23 +99,23 @@ const JobsPage = () => {
   useEffect(() => {
     if (dubbingState.lastSubmission?.job_id) {
       const newJobId = dubbingState.lastSubmission.job_id;
-      
+
       // add initial notification for the new job
       const newNotification = {
         job_id: newJobId,
         status: "queued",
         progress: 0,
       };
-      
+
       dispatch(setJobNotifications([newNotification]));
       localStorage.setItem(ACTIVE_JOB_STORAGE_KEY, newJobId);
-      
+
       // optional: subscribe to the newly submitted job immediately
       if (isConnected && subscribeToJobs) {
-      console.log("Subscribing to new job:", newJobId);
+        console.log("Subscribing to new job:", newJobId);
         subscribeToJobs([newJobId]);
       }
-      
+
       // reload jobs to get the new one in the list
       dispatch(loadUserJobs(DEFAULT_USER_ID));
     }
@@ -179,31 +179,31 @@ const JobsPage = () => {
 
     const handleJobStatusUpdate = (data) => {
       if (!isMounted) return;
-      
+
       const { job_id, status, progress_percentage } = data;
-      
+
       console.log("🔔 [JobsPage] Received job status update:", data);
-      
+
       // normalize status to lowercase for consistency
       const normalizedStatus = (status || "").toLowerCase();
-      
+
       // Map backend field (progress_percentage) to frontend field (progress)
       // Handle null/undefined/0 correctly
-      const progress = progress_percentage !== null && progress_percentage !== undefined 
-        ? progress_percentage 
+      const progress = progress_percentage !== null && progress_percentage !== undefined
+        ? progress_percentage
         : 0;
-      
+
       const notificationItem = {
         job_id,
         status: normalizedStatus,
         progress: progress
       };
-      
+
       console.log("📤 [JobsPage] Dispatching notification update:", notificationItem);
-      
+
       // update job status in bulk first (updates jobs list)
       dispatch(setJobStatusBulk([notificationItem]));
-      
+
       // dispatch update to notifications - reducer will handle merging and filtering completed jobs
       dispatch(setJobNotifications([notificationItem]));
 
@@ -213,7 +213,7 @@ const JobsPage = () => {
       } else {
         localStorage.setItem(ACTIVE_JOB_STORAGE_KEY, job_id);
       }
-      
+
       console.log("✅ [JobsPage] Notification update dispatched");
     };
 
@@ -256,7 +256,7 @@ const JobsPage = () => {
 
   const handleDeleteAllCompleted = async () => {
     if (completedJobs.length === 0) return;
-    
+
     if (window.confirm(`Are you sure you want to delete all ${completedJobs.length} completed jobs?`)) {
       // Delete all completed jobs sequentially
       for (const job of completedJobs) {
