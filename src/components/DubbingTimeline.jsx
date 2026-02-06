@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import AudioWaveform from "./AudioWaveform.jsx";
+import Loading from "./Loading.jsx";
 import { FiVolume2, FiMic, FiHeadphones, FiMoreHorizontal, FiVolumeX } from "react-icons/fi";
 import "../styles/DubbingTimeline.css";
 

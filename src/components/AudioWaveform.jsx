@@ -13,109 +13,133 @@ const AudioWaveform = ({ audioUrl, onReady, onSelectionChange, timelineContainer
   // Track readiness to prevent calling methods before load
   const isReadyRef = useRef(false);
 
-  // Initialize WaveSurfer
+  // Initialize WaveSurfer with robust cleanup and error handling
   useEffect(() => {
     if (!containerRef.current || !audioUrl) return;
 
-    // Destroy existing if re-initializing (though logic attempts to preserve)
-    // Actually our previous logic tried to preserve. Let's stick to safe init.
-    if (!waveSurferRef.current) {
-      // ... (setup code same as before but cleaner)
-      const plugins = [];
-      if (RegionsPlugin) plugins.push(RegionsPlugin.create({ regionsRef }));
-      if (TimelinePlugin && timelineContainer) {
-        const containerNode = typeof timelineContainer === 'string'
-          ? document.querySelector(timelineContainer)
-          : timelineContainer;
-        if (containerNode) {
-          plugins.push(TimelinePlugin.create({
-            container: containerNode,
-            height: 20,
-            timeInterval: 2,
-            primaryLabelInterval: 2,
-            style: { fontSize: '10px', color: '#6b7280' }
-          }));
-        }
-      }
+    let ws = null;
+    let isMounted = true;
 
-      waveSurferRef.current = WaveSurfer.create({
-        container: containerRef.current,
-        waveColor: "#94a3b8",
-        progressColor: "#2563eb",
-        height: 64,
-        cursorWidth: 0,
-        cursorColor: "transparent",
-        dragToSeek: true,
-        interact: true,
-        normalize: true,
-        responsive: true,
-        autoScroll: true,
-        minPxPerSec: 20, // Default init zoom
-        plugins: plugins.length ? plugins : undefined,
-      });
+    const initWaveSurfer = async () => {
+      // Small delay to ensure container has layout (sometimes an issue in flex containers)
+      await new Promise(r => setTimeout(r, 0));
+      if (!isMounted) return;
 
-      waveSurferRef.current.on("ready", () => {
-        isReadyRef.current = true;
-        // Apply initial zoom if provided
-        if (zoom) {
-          waveSurferRef.current.zoom(zoom);
-        }
+      if (!containerRef.current) return;
 
-        if (RegionsPlugin && regionsRef.current) {
-          regionsRef.current.enableDragSelection({
-            color: "rgba(59, 130, 246, 0.25)",
-          });
-          const notifySelection = (region) => {
-            const startMs = Math.round(region.start * 1000);
-            const endMs = Math.round(region.end * 1000);
-            onSelectionChangeRef.current?.(startMs, endMs);
-          };
-          regionsRef.current.on("region-created", (region) => {
-            regionsRef.current.clearRegions(); // clear old
-            const single = regionsRef.current.addRegion({
-              start: region.start,
-              end: region.end,
-              color: "rgba(59, 130, 246, 0.3)",
-              drag: true,
-              resize: true,
-            });
-            notifySelection(single);
-            single.on("region-updated", () => notifySelection(single));
-          });
-          regionsRef.current.on("region-updated", (region) => {
-            notifySelection(region);
-          });
-        }
-        if (onReady) onReady(waveSurferRef.current);
-      });
-
-      waveSurferRef.current.load(audioUrl);
-    }
-  }, [audioUrl, timelineContainer]);
-
-  // Handle Zoom Updates safely
-  useEffect(() => {
-    if (waveSurferRef.current && isReadyRef.current && zoom) {
       try {
-        waveSurferRef.current.zoom(zoom);
-      } catch (e) {
-        console.warn("WaveSurfer zoom error:", e);
-      }
-    }
-  }, [zoom]);
+        const plugins = [];
+        if (RegionsPlugin) plugins.push(RegionsPlugin.create({ regionsRef }));
+        if (TimelinePlugin && timelineContainer) {
+          const containerNode = typeof timelineContainer === 'string'
+            ? document.querySelector(timelineContainer)
+            : timelineContainer;
+          if (containerNode) {
+            plugins.push(TimelinePlugin.create({
+              container: containerNode,
+              height: 20,
+              timeInterval: 2,
+              primaryLabelInterval: 2,
+              style: { fontSize: '10px', color: '#6b7280' }
+            }));
+          }
+        }
 
-  // Clean up on unmount ONLY
-  useEffect(() => {
-    return () => {
-      regionsRef.current = null;
-      if (waveSurferRef.current) {
-        try {
-          waveSurferRef.current.destroy();
-        } catch (e) { }
-        waveSurferRef.current = null;
+        ws = WaveSurfer.create({
+          container: containerRef.current,
+          waveColor: "#94a3b8",
+          progressColor: "#2563eb",
+          height: 64,
+          cursorWidth: 0,
+          cursorColor: "transparent",
+          dragToSeek: true,
+          interact: true,
+          normalize: true,
+          responsive: true,
+          autoScroll: true,
+          minPxPerSec: 20,
+          plugins: plugins.length ? plugins : undefined,
+        });
+
+        // Error handling
+        ws.on('error', (err) => {
+          console.error("WaveSurfer Error:", err);
+        });
+
+        ws.on("ready", () => {
+          if (!isMounted) return;
+          isReadyRef.current = true;
+          // Apply initial zoom if provided
+          if (zoom) {
+            try { ws.zoom(zoom); } catch (e) { console.warn(e); }
+          }
+
+          if (RegionsPlugin && regionsRef.current) {
+            regionsRef.current.enableDragSelection({
+              color: "rgba(59, 130, 246, 0.25)",
+            });
+            const notifySelection = (region) => {
+              const startMs = Math.round(region.start * 1000);
+              const endMs = Math.round(region.end * 1000);
+              onSelectionChangeRef.current?.(startMs, endMs);
+            };
+            // Clear existing regions if any
+            regionsRef.current.clearRegions();
+
+            regionsRef.current.on("region-created", (region) => {
+              // Ensure we only have one region if that's the desired behavior for selection?
+              // The previous code cleared regions on creation, implying single selection.
+              // We need to be careful not to infinite loop if clearRegions triggers something.
+              // But here we are inside region-created.
+              // Let's stick to the previous logic but safely.
+              // Actually, clearing regions inside region-created might be tricky.
+              // Better is: use the region just created.
+              // If we want single selection, we can remove OTHERS.
+              const regions = regionsRef.current.getRegions();
+              regions.forEach(r => {
+                if (r.id !== region.id) r.remove();
+              });
+
+              // Style the new one
+              region.setOptions({
+                color: "rgba(59, 130, 246, 0.3)",
+                drag: true,
+                resize: true
+              });
+
+              notifySelection(region);
+              region.on("region-updated", () => notifySelection(region));
+            });
+
+            regionsRef.current.on("region-updated", (region) => {
+              notifySelection(region);
+            });
+          }
+
+          waveSurferRef.current = ws;
+          if (onReady) onReady(ws);
+        });
+
+        ws.load(audioUrl);
+
+      } catch (err) {
+        console.error("Failed to init WaveSurfer:", err);
       }
     };
-  }, []);
+
+    initWaveSurfer();
+
+    return () => {
+      isMounted = false;
+      isReadyRef.current = false; // logic change: mark not ready immediately
+      if (ws) {
+        try {
+          ws.destroy();
+        } catch (e) { console.warn("Destroy error", e); }
+      }
+      waveSurferRef.current = null;
+    };
+  }, [audioUrl, timelineContainer]);
 
   return <div className="waveform-container" ref={containerRef} />;
 };
