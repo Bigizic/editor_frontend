@@ -22,13 +22,13 @@ const JobCard = ({ job, onOpenEditor, onDelete, deleting }) => {
     <div className="card job-card">
       <video src={videoUrl} controls preload="metadata" />
       <div className="job-meta">
-        <div>
-          <strong>File:</strong> {job.file_name || "Unknown"}
+        <div className="job-meta-row">
+          <strong>File:</strong> <span className="job-file-name">{job.file_name || "Unknown"}</span>
         </div>
-        <div>
+        <div className="job-meta-row">
           <strong>Status:</strong> {formatStatusText(job.status)}
         </div>
-        <div>
+        <div className="job-meta-row">
           <strong>Languages:</strong> {job.source_language || "?"} →{" "}
           {job.target_language || "?"}
         </div>

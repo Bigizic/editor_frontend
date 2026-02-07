@@ -28,7 +28,8 @@ const EditorView = ({
   onUpdateSegmentMeta,
   onSegmentVocalGainChange,
   onSegmentBackgroundGainChange,
-  onDeleteSegment
+  onDeleteSegment,
+  onAlert
 }) => {
   const LANGUAGE_LABELS = supportedLanguages || {};
   const LANGUAGE_FLAGS = {
@@ -39,7 +40,8 @@ const EditorView = ({
     de: "🇩🇪",
     ru: "🇷🇺",
     zh: "🇨🇳",
-    sw: "🇹🇿"
+    sw: "🇹🇿",
+    yo: "🇳🇬"
   };
   const LANGUAGE_LABELS_WITH_AUTO = { auto_detect: "Auto Detect", ...LANGUAGE_LABELS };
 
@@ -286,63 +288,93 @@ const EditorView = ({
     })
     .filter(Boolean);
 
-  const handleTranslateFromSource = async (segment) => {
+  const handleRetranslate = async (segment, direction) => {
     try {
       setRetranslatingId(segment.id);
-      // get the edited source text if available, otherwise use original
-      const sourceText = edits[segment.id]?.source_text || segment.source_text;
-      // use per-segment source_language when video used auto_detect
-      const segSourceLang = segment.source_language || video.source_language;
-      const response = await retranslateSegment(segment.id, {
-        source_language: segSourceLang,
-        target_language: targetLanguage,
-        source_text: sourceText
-      });
+
+      let payload = {
+        direction,
+        source_language: segment.source_language || video.source_language,
+        target_language: targetLanguage
+      };
+
+      if (direction === "source_to_target") {
+        // Source -> Target
+        payload.source_text = edits[segment.id]?.source_text || segment.source_text;
+      } else {
+        // Target -> Source
+        payload.target_text = edits[segment.id]?.target_text || segment.target_text;
+      }
+
+      const response = await retranslateSegment(segment.id, payload);
+
       setRetranslations((prev) => ({
         ...prev,
-        [segment.id]: response.translated_text
+        [segment.id]: {
+          text: response.translated_text,
+          direction
+        }
       }));
+    } catch (e) {
+      if (onAlert) onAlert(`Translation failed: ${e.message}`, "Error");
+      else alert(`Translation failed: ${e.message}`);
     } finally {
       setRetranslatingId(null);
     }
   };
 
   const acceptRetranslation = (segmentId) => {
-    const text = retranslations[segmentId];
-    if (!text) {
-      return;
-    }
+    const retrans = retranslations[segmentId];
+    if (!retrans) return;
+
+    const { text, direction } = retrans;
     const segment = segments.find(s => s.id === segmentId);
-    if (!segment) {
-      return;
-    }
+    if (!segment) return;
 
-    // get current edit state to include source_text if it was edited
-    const currentEdit = edits[segmentId] || {};
-    const sourceText = currentEdit.source_text || segment.source_text;
+    setEdits((prev) => {
+      const current = prev[segmentId] || {};
+      const update = { ...current };
 
-    // update the edits with the new translation
-    setEdits((prev) => ({
-      ...prev,
-      [segmentId]: {
-        ...prev[segmentId],
-        target_text: text,
-        source_text: sourceText
+      if (direction === "source_to_target") {
+        update.target_text = text;
+        // ensure source text is preserved from edit state
+        update.source_text = current.source_text || segment.source_text;
+      } else {
+        update.source_text = text;
+        // ensure target text is preserved from edit state
+        update.target_text = current.target_text || segment.target_text;
       }
-    }));
 
-    // clear the retranslation preview
+      return { ...prev, [segmentId]: update };
+    });
+
+    // clear preview
     setRetranslations((prev) => {
       const next = { ...prev };
       delete next[segmentId];
       return next;
     });
 
-    // automatically trigger Apply Changes with the updated values
+    // trigger apply changes (optional - maybe user wants to review first? existing logic triggered it)
+    // Existing logic triggered it, but with T->S it might be better to let user manually apply?
+    // Let's stick to auto-apply for consistency with previous behavior, but check if we need to send both texts.
+    // Actually, onApplyChanges uses the `dirtySegments` logic which reads from `edits`.
+    // Since we just updated `edits`, we can't immediately call onApplyChanges with the new state unless we construct it manually.
+    // The previous implementation constructed `change` object manually.
+
+    // We'll defer auto-apply or construct it carefully.
+    // Previous:
+    // const change = { segment_id: segmentId, source_text: sourceText, target_text: text };
+    // onApplyChanges([change]);
+
+    // Let's just update edits and let the user click "Apply Changes" or rely on the "dirty" state?
+    // The previous code explicitly auto-applied. Let's keep that for S->T consistency, and add for T->S.
+
+    const currentEdit = edits[segmentId] || {};
     const change = {
       segment_id: segmentId,
-      source_text: sourceText,
-      target_text: text
+      source_text: direction === "target_to_source" ? text : (currentEdit.source_text || segment.source_text),
+      target_text: direction === "source_to_target" ? text : (currentEdit.target_text || segment.target_text)
     };
     onApplyChanges([change]);
   };
@@ -364,30 +396,25 @@ const EditorView = ({
         gender: current?.gender || segment.gender,
         voice_profile: current?.voice_profile ?? segment.voice_profile
       });
-      alert("Segment audio redubbed successfully!");
+      if (onAlert) onAlert("Segment audio redubbed successfully!", "Success");
+      else alert("Segment audio redubbed successfully!");
       window.location.reload();
     } catch (error) {
-      alert(`Failed to redub segment: ${error.message}`);
+      if (onAlert) onAlert(`Failed to redub segment: ${error.message}`, "Error");
+      else alert(`Failed to redub segment: ${error.message}`);
     } finally {
       setRedubbingId(null);
     }
   };
 
-  // final safety check before render
-  if (!video || !segments || !Array.isArray(segments)) {
-    return (
-      <div className="card">
-        <h3 className="card-title">Editor Timeline</h3>
-        <div>Loading editor data...</div>
-      </div>
-    );
-  }
+  // ... (safety check)
 
   return (
     <div className="card editor-view">
-      <h3 className="card-title">Editor Timeline</h3>
+      {/* ... (header) ... */}
       <div className="timeline-table transcript-scroll" ref={transcriptScrollRef}>
         {segments && segments.length > 0 ? segments.filter(segment => segment && segment.id).map((segment, index) => {
+          // ... (segment mapping) ...
           const isActive = currentPlaybackTime >= (segment.start_time_ms || 0) &&
             currentPlaybackTime < (segment.end_time_ms || 0);
           const speakerDetails = getSpeakerDetails(segment.speaker_label);
@@ -396,6 +423,11 @@ const EditorView = ({
           const profiles = getProfilesForGender(effectiveGender) || [];
           const mismatch = checkSegmentMismatch ? checkSegmentMismatch(segment.speaker_label || "Unassigned", segment) : { gender: false, voiceType: false, voiceProfile: false, any: false };
           const speakerLabels = allSpeakerLabels?.length ? allSpeakerLabels : (speakerOrder.length ? speakerOrder : ["Unassigned"]);
+
+          const pendingRetrans = retranslations[segment.id];
+          const isSTPending = pendingRetrans?.direction === "source_to_target";
+          const isTSPending = pendingRetrans?.direction === "target_to_source";
+
           return (
             <div
               key={segment.id}
@@ -407,6 +439,7 @@ const EditorView = ({
               <div className="segment-number">{index + 1}</div>
               <div className={`timeline-row ${isActive ? 'active-segment' : ''}`}>
                 <div className="segment-header">
+                  {/* ... (meta controls same as before) ... */}
                   <div className="segment-line segment-line-meta">
                     <div className="meta-inline">
                       {speakerLabels.length > 0 ? (
@@ -562,25 +595,44 @@ const EditorView = ({
                       <label>Source</label>
                       <button
                         className={`button secondary small ${retranslatingId === segment.id || (edits[segment.id]?.source_text ?? segment.source_text ?? '') === (segment.source_text ?? '') ? 'muted' : ''}`}
-                        onClick={() => handleTranslateFromSource(segment)}
-                        disabled={retranslatingId === segment.id || changingLanguage || redubbing || redubbingId === segment.id || (edits[segment.id]?.source_text ?? segment.source_text ?? '') === (segment.source_text ?? '')}
-                        title={(edits[segment.id]?.source_text ?? segment.source_text ?? '') === (segment.source_text ?? '') ? "Edit source text to retranslate" : "Retranslate this segment"}
+                        onClick={() => handleRetranslate(segment, "source_to_target")}
+                        disabled={retranslatingId === segment.id || changingLanguage || redubbing || redubbingId === segment.id}
+                        title="Translate Source → Target"
                       >
-                        {retranslatingId === segment.id ? 'Translating...' : 'Retranslate'}
+                        {retranslatingId === segment.id && !isTSPending ? 'Translating...' : 'Translate ➔'}
                       </button>
+                      {/* Show Accept/Cancel here if T->S preview is active */}
+                      {isTSPending ? (
+                        <div className="confirm-row">
+                          <button className="button primary" onClick={() => acceptRetranslation(segment.id)}>
+                            <FiCheck />
+                          </button>
+                          <button className="button secondary" onClick={() => discardRetranslation(segment.id)}>
+                            <FiX />
+                          </button>
+                        </div>
+                      ) : null}
                     </div>
                     <textarea
                       className="auto-resize-textarea"
-                      value={edits[segment.id]?.source_text || ""}
+                      value={
+                        isTSPending
+                          ? pendingRetrans.text
+                          : (edits[segment.id]?.source_text || "")
+                      }
                       onChange={(event) => {
                         handleChange(segment.id, "source_text", event.target.value);
-                        // auto-resize textarea
                         event.target.style.height = 'auto';
                         event.target.style.height = event.target.scrollHeight + 'px';
                       }}
                       disabled={applying || changingLanguage || redubbing}
                       rows={1}
                     />
+                    {isTSPending ? (
+                      <div className="new-translation-note">
+                        New translation: {pendingRetrans.text}
+                      </div>
+                    ) : null}
                     {segment.source_language ? (
                       <small className="segment-source-lang-hint">
                         Detected: {LANGUAGE_LABELS_WITH_AUTO[segment.source_language] || segment.source_language}
@@ -590,51 +642,59 @@ const EditorView = ({
                   <div className="timeline-text">
                     <div className="label-with-button label-with-button-target">
                       <label>Target</label>
-                      <button
-                        className={`button secondary small ${redubbingId === segment.id ? 'muted' : ''}`}
-                        onClick={() => handleRedubSegment(segment)}
-                        disabled={retranslatingId === segment.id || changingLanguage || redubbing || redubbingId === segment.id}
-                        title="Redub audio for this segment"
-                      >
-                        <FiShuffle />
-                        <span>{redubbingId === segment.id ? 'Redubbing...' : 'Redub'}</span>
-                      </button>
-                      {retranslations[segment.id] ? (
-                        <div className="confirm-row">
-                          <button
-                            className="button primary"
-                            onClick={() => acceptRetranslation(segment.id)}
-                          >
-                            <FiCheck />
-                          </button>
-                          <button
-                            className="button secondary"
-                            onClick={() => discardRetranslation(segment.id)}
-                          >
-                            <FiX />
-                          </button>
-                        </div>
-                      ) : null}
+
+                      {/* Action buttons row */}
+                      <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                        <button
+                          className="button secondary small"
+                          onClick={() => handleRetranslate(segment, "target_to_source")}
+                          disabled={retranslatingId === segment.id || changingLanguage || redubbing || redubbingId === segment.id}
+                          title="Translate Target → Source (Reverse)"
+                        >
+                          {retranslatingId === segment.id && !isSTPending ? '...' : '⬅ Trans'}
+                        </button>
+
+                        {/* Show Accept/Cancel here if S->T preview is active */}
+                        {isSTPending ? (
+                          <div className="confirm-row">
+                            <button className="button primary" onClick={() => acceptRetranslation(segment.id)}>
+                              <FiCheck />
+                            </button>
+                            <button className="button secondary" onClick={() => discardRetranslation(segment.id)}>
+                              <FiX />
+                            </button>
+                          </div>
+                        ) : null}
+
+                        <button
+                          className={`button secondary small ${redubbingId === segment.id ? 'muted' : ''}`}
+                          onClick={() => handleRedubSegment(segment)}
+                          disabled={retranslatingId === segment.id || changingLanguage || redubbing || redubbingId === segment.id}
+                          title="Redub audio for this segment"
+                        >
+                          <FiShuffle />
+                          <span>{redubbingId === segment.id ? 'Redubbing...' : 'Redub'}</span>
+                        </button>
+                      </div>
                     </div>
                     <textarea
                       className="auto-resize-textarea"
                       value={
-                        retranslations[segment.id] ||
-                        edits[segment.id]?.target_text ||
-                        ""
+                        isSTPending
+                          ? pendingRetrans.text
+                          : (edits[segment.id]?.target_text || "")
                       }
                       onChange={(event) => {
                         handleChange(segment.id, "target_text", event.target.value);
-                        // auto-resize textarea
                         event.target.style.height = 'auto';
                         event.target.style.height = event.target.scrollHeight + 'px';
                       }}
                       disabled={applying || changingLanguage || redubbing}
                       rows={1}
                     />
-                    {retranslations[segment.id] ? (
+                    {isSTPending ? (
                       <div className="new-translation-note">
-                        New translation: {retranslations[segment.id]}
+                        New translation: {pendingRetrans.text}
                       </div>
                     ) : null}
                   </div>

@@ -1692,6 +1692,16 @@ a {
   flex: 1;
 }
 
+.job-meta-row {
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+.job-file-name {
+  font-weight: 400;
+  color: var(--editor-text-muted);
+}
+
 .job-actions {
   display: flex;
   gap: 10px;

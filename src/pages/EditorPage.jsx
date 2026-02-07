@@ -160,7 +160,8 @@ const EditorPage = () => {
     de: "German",
     ru: "Russian",
     zh: "Chinese (Mandarin)",
-    sw: "Swahili"
+    sw: "Swahili",
+    yo: "Yoruba"
   };
   const LANGUAGE_FLAGS = {
     auto_detect: "🔍",
@@ -170,7 +171,8 @@ const EditorPage = () => {
     de: "🇩🇪",
     ru: "🇷🇺",
     zh: "🇨🇳",
-    sw: "🇹🇿"
+    sw: "🇹🇿",
+    yo: "🇳🇬"
   };
   const LANGUAGE_LABELS_WITH_AUTO = { auto_detect: "Auto Detect", ...SUPPORTED_LANGUAGES };
 
@@ -659,7 +661,7 @@ const EditorPage = () => {
       setAudioCacheBuster((b) => b + 1);
       setWaveformSelection(null);
     } catch (e) {
-      alert(`${opName} failed: ${e?.response?.data?.detail ?? e?.message ?? e}`);
+      showAlert(`${opName} failed: ${e?.response?.data?.detail ?? e?.message ?? e}`, "Error");
     } finally {
       setAudioOpInProgress(false);
     }
@@ -731,7 +733,7 @@ const EditorPage = () => {
       await remixDubbedAudio(video.id);
       setAudioCacheBuster((prev) => prev + 1);
     } catch (e) {
-      alert(`Remix failed: ${e?.response?.data?.detail ?? e?.message ?? e}`);
+      showAlert(`Remix failed: ${e?.response?.data?.detail ?? e?.message ?? e}`, "Error");
     } finally {
       setRemixing(false);
     }
@@ -850,7 +852,7 @@ const EditorPage = () => {
                   if (!video?.id) return;
                   try {
                     await dispatch(redubVideoAction(video.id));
-                    alert("Redub job done! The video has been regenerated with current transcript data.");
+                    showAlert("Redub job done! The video has been regenerated with current transcript data.", "Success");
                     setTimeout(() => window.location.reload(), 2000);
                   } catch (_) { }
                 }}
@@ -911,7 +913,7 @@ const EditorPage = () => {
                 onRedub={async (videoId) => {
                   try {
                     await dispatch(redubVideoAction(videoId));
-                    alert("Redub job done. The video has been regenerated with current transcript data.");
+                    showAlert("Redub job done. The video has been regenerated with current transcript data.", "Success");
                     // optionally reload after a delay to see updated status
                     setTimeout(() => window.location.reload(), 2000);
                   } catch (error) {

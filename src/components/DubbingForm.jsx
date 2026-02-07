@@ -10,7 +10,8 @@ const SUPPORTED_LANGUAGES = {
   de: { name: "German", flag: "🇩🇪" },
   ru: { name: "Russian", flag: "🇷🇺" },
   zh: { name: "Chinese (Mandarin)", flag: "🇨🇳" },
-  sw: { name: "Swahili", flag: "🇹🇿" }
+  sw: { name: "Swahili", flag: "🇹🇿" },
+  yo: { name: "Yoruba", flag: "🇳🇬" }
 };
 
 // Source languages include auto_detect for per-segment language detection
