@@ -11,7 +11,8 @@ const DubbingTimeline = ({
   audioUrl,
   speakers = [],
   onWaveReady,
-  onSelectionChange
+  onSelectionChange,
+  onSegmentUpdate
 }) => {
   const [wavesurfer, setWavesurfer] = useState(null);
   const [duration, setDuration] = useState(0);
@@ -54,6 +55,141 @@ const DubbingTimeline = ({
   useEffect(() => {
     speakersRef.current = speakers;
   }, [speakers]);
+
+  const [dragging, setDragging] = useState(null); // { segmentId, edge: 'start'|'end', initialX, initialTime, originalSegment }
+
+  // Create a flattened list of all segments for easier ripple calculation
+  const allSegments = useMemo(() => {
+    return speakers.flatMap(sp => sp.segments || []).sort((a, b) => a.order_index - b.order_index);
+  }, [speakers]);
+
+  // Handle Resize Start
+  const handleResizeStart = (e, segment, edge) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setDragging({
+      segmentId: segment.id,
+      edge,
+      initialX: e.clientX,
+      initialStart: segment.start_time_ms,
+      initialEnd: segment.end_time_ms,
+      originalSegment: segment
+    });
+  };
+
+  // Global Mouse Handlers for Dragging
+  useEffect(() => {
+    if (!dragging) return;
+
+    const onMouseMove = (e) => {
+      if (!tracksContainerRef.current) return;
+
+      const deltaPx = e.clientX - dragging.initialX;
+      // Convert px to ms: deltaPx / zoom * 1000
+      const deltaMs = (deltaPx / zoom) * 1000;
+
+      setDragging(prev => ({ ...prev, deltaMs }));
+    };
+
+    const onMouseUp = async () => {
+      // Commit change
+      if (dragging && dragging.deltaMs) {
+        const { segmentId, edge, initialStart, initialEnd, deltaMs } = dragging;
+
+        // Calculate final values (rounded to integer ms)
+        let newStart = initialStart;
+        let newEnd = initialEnd;
+
+        if (edge === 'start') {
+          newStart = Math.round(initialStart + deltaMs);
+        } else {
+          newEnd = Math.round(initialEnd + deltaMs);
+        }
+
+        // Basic validation
+        if (newEnd > newStart + 100) { // minimum 100ms duration
+          if (onSegmentUpdate) {
+            // Trigger update with is_manual_stretch=true
+            // If dragging 'end', it's a stretch/compress
+            // If dragging 'start', standard move? Or also stretch? 
+            // User request specifically mentioned "manual stretch and compress".
+            // Usually stretch is changing duration.
+
+            // If we change END, we are changing duration -> Stretch.
+            // If we change START, we are also changing duration -> Stretch.
+            // Both should trigger manual stretch logic if duration changes.
+
+            onSegmentUpdate(segmentId, {
+              start_time_ms: newStart,
+              end_time_ms: newEnd,
+              is_manual_stretch: true
+            });
+          }
+        }
+      }
+      setDragging(null);
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [dragging, zoom, onSegmentUpdate]);
+
+  // Helper to get effective segment timing (considering drag & ripple)
+  const getRenderTiming = (segment) => {
+    // 1. If this is the dragged segment
+    if (dragging && dragging.segmentId === segment.id) {
+      if (dragging.edge === 'start') {
+        return {
+          start: Math.max(0, dragging.initialStart + (dragging.deltaMs || 0)),
+          end: dragging.initialEnd
+        };
+      } else {
+        return {
+          start: dragging.initialStart,
+          end: Math.max(dragging.initialStart + 100, dragging.initialEnd + (dragging.deltaMs || 0))
+        };
+      }
+    }
+
+    // 2. If this segment is AFTER the dragged segment (Ripple Effect)
+    // Only ripple if we are stretching (changing END time of dragged segment)
+    // If we move START of dragged segment, does it ripple?
+    // "Stretch and compress" usually implies changing the TAIL.
+    // If I pull the HEAD, I'm just shortening/lengthening the start. 
+    // Let's assume ripple mainly applies when pushing the timeline forward/backward via End Drag.
+
+    if (dragging && dragging.deltaMs && dragging.segmentId !== segment.id) {
+      const draggedSeg = dragging.originalSegment;
+
+      // Check if this segment is strictly after the dragged segment
+      // We can use order_index if available, or start time.
+      // Safety: use order_index if possible, else start_time
+      const isAfter = (segment.order_index > draggedSeg.order_index) ||
+        (segment.order_index === draggedSeg.order_index && segment.start_time_ms > draggedSeg.start_time_ms) ||
+        (segment.start_time_ms >= draggedSeg.end_time_ms); // fallback
+
+      if (isAfter) {
+        // If dragging END -> Ripple moves by delta
+        // If dragging START -> Ripple usually doesn't move subsequent segments (unless we implement "shove" logic later)
+        // Logic: Changing Start of Seg A usually affects Seg A's duration. It doesn't necessarily push Seg B.
+        // Logic: Changing End of Seg A directly pushes Seg B.
+
+        if (dragging.edge === 'end') {
+          const shift = dragging.deltaMs || 0;
+          return {
+            start: segment.start_time_ms + shift,
+            end: segment.end_time_ms + shift
+          };
+        }
+      }
+    }
+
+    return { start: segment.start_time_ms, end: segment.end_time_ms };
+  };
 
   // --- WAVESURFER INITIALIZATION & SYNC ---
   const handleInternalWaveReady = useCallback((ws) => {
@@ -306,7 +442,7 @@ const DubbingTimeline = ({
 
   return (
     <div className="dubbing-timeline-card">
-      <div className={`scrub-overlay ${isScrubbing ? 'active' : ''}`} />
+      <div className={`scrub-overlay ${isScrubbing || dragging ? 'active' : ''}`} style={{ cursor: dragging ? 'col-resize' : 'ew-resize' }} />
       <div className="timeline-ruler-fixed">
         <div className="ruler-sidebar-placeholder" />
         <div
@@ -427,19 +563,39 @@ const DubbingTimeline = ({
                 return (
                   <div key={sp.label || idx} className="track-lane">
                     {sp.segments && sp.segments.map(seg => {
-                      const start = seg.start_time_ms / 1000;
-                      const end = seg.end_time_ms / 1000;
-                      const width = (end - start) * zoom;
-                      const left = start * zoom;
+                      const { start, end } = getRenderTiming(seg);
+                      const width = (end - start) / 1000 * zoom;
+                      const left = start / 1000 * zoom;
                       return (
                         <div
                           key={seg.id}
-                          className={`segment-clip dubbed ${colorClass}`}
-                          style={{ left, width }}
+                          className={`segment-clip dubbed ${colorClass} ${dragging && dragging.segmentId === seg.id ? 'dragging' : ''}`}
+                          style={{ left, width, overflow: 'visible' }} // Overflow visible for handles
                           title={`Dubbed: ${seg.target_text}`}
                           onClick={(e) => handleSegmentClick(e, seg)}
                         >
-                          <span className="segment-text">{seg.target_text || "..."}</span>
+                          {/* Handles */}
+                          <div
+                            className="resize-handle left-handle"
+                            style={{
+                              position: 'absolute', left: 0, top: 0, bottom: 0, width: 8,
+                              cursor: 'w-resize', zIndex: 10
+                            }}
+                            onMouseDown={(e) => handleResizeStart(e, seg, 'start')}
+                          />
+
+                          <span className="segment-text" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', width: '100%', paddingLeft: 8, paddingRight: 8 }}>
+                            {seg.target_text || "..."}
+                          </span>
+
+                          <div
+                            className="resize-handle right-handle"
+                            style={{
+                              position: 'absolute', right: 0, top: 0, bottom: 0, width: 8,
+                              cursor: 'e-resize', zIndex: 10
+                            }}
+                            onMouseDown={(e) => handleResizeStart(e, seg, 'end')}
+                          />
                         </div>
                       );
                     })}

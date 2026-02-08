@@ -513,6 +513,20 @@ const EditorPage = () => {
     instance.on("seek", updateWaveformTime);
   };
 
+  const handleSegmentTimingChange = useCallback(async (segmentId, changes) => {
+    if (!segmentId) return;
+    try {
+      await dispatch(saveSegmentUpdate(segmentId, changes));
+
+      if (changes.is_manual_stretch && video?.id) {
+        // Reload to sync ripple effects from backend
+        dispatch(loadEditorByVideoId(video.id));
+      }
+    } catch (e) {
+      showAlert(`Failed to update segment timing: ${e?.message || e}`, "Error");
+    }
+  }, [dispatch, video?.id]);
+
   const handleUpdateMeta = async (segmentId, payload) => {
     if (!segmentId) return;
     await dispatch(saveSegmentUpdate(segmentId, payload));
@@ -863,12 +877,12 @@ const EditorPage = () => {
                 <span>Redub entire video</span>
               </button>
             </div>
-            {changingLanguage || redubbing ? (
-              <div className="progress-bar editor-top-progress">
-                <div className="progress-bar__fill" />
-              </div>
-            ) : null}
           </div>
+          {changingLanguage || redubbing ? (
+            <div className="progress-bar editor-top-progress">
+              <div className="progress-bar__fill" />
+            </div>
+          ) : null}
           <nav className="editor-section-nav" aria-label="Editor sections">
             {EDITOR_SECTIONS.map(({ id, label, icon: Icon }) => (
               <button
@@ -1230,6 +1244,7 @@ const EditorPage = () => {
                 speakers={speakerControlData} /* Passing full speaker control data which has label, displayLabel etc */
                 onWaveReady={handleWaveReady}
                 onSelectionChange={handleWaveformSelection}
+                onSegmentUpdate={handleSegmentTimingChange}
               />
 
               <AudioControls
