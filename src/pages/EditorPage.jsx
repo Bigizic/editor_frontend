@@ -818,7 +818,7 @@ const EditorPage = () => {
   return (
     <div className="editor-page-wrap">
       <header className="editor-top-bar">
-        <span className="editor-top-bar-title">Editor</span>
+        <span className="editor-top-bar-title">Reedapt Editor</span>
         <button
           type="button"
           className="editor-theme-toggle"
