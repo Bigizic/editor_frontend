@@ -9,7 +9,7 @@ import {
 } from "../redux/actions/jobActions.js";
 import { submitJob } from "../redux/actions/dubbingActions.js";
 import JobsGrid from "../components/JobsGrid.jsx";
-import Loading from "../components/Loading.jsx";
+import LoadingScreenContainer from "../components/LoadingScreenContainer.jsx";
 import ErrorBanner from "../components/ErrorBanner.jsx";
 import DubbingForm from "../components/DubbingForm.jsx";
 import { useSocket } from "../Socket/index.jsx";
@@ -338,7 +338,7 @@ const JobsPage = () => {
         </aside>
         <main className="projects-main">
           <h2>Projects</h2>
-          {loading && <Loading message="Loading jobs..." />}
+          <LoadingScreenContainer loading={loading} statusText="Loading" />
           <ErrorBanner message={error} />
           {!loading && (
             <div className="projects-grid">

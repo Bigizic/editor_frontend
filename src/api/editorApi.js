@@ -35,10 +35,6 @@ export const mergeSegments = async (segmentIds) => {
   return response.data;
 };
 
-export const regenerateSegmentDub = async (segmentId) => {
-  const response = await apiClient.post(`/editor/segments/${segmentId}/regenerate-dub`);
-  return response.data;
-};
 
 export const activateAudioTake = async (takeId) => {
   const response = await apiClient.post(`/editor/audio-takes/${takeId}/activate`);

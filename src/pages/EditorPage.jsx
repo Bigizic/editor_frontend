@@ -12,7 +12,8 @@ import {
   saveSegmentUpdate,
   deleteSegmentAction
 } from "../redux/actions/editorActions.js";
-import Loading from "../components/Loading.jsx";
+import { EDITOR_BUSY, EDITOR_IDLE } from "../redux/constants/editorConstants.js";
+import { useSocket } from "../Socket/index.jsx";
 import ErrorBanner from "../components/ErrorBanner.jsx";
 import EditorView from "../components/EditorView.jsx";
 import AudioWaveform from "../components/AudioWaveform.jsx";
@@ -45,7 +46,7 @@ import {
 } from "../api/editorApi.js";
 import Select from "../components/Select.jsx";
 import ConfirmSelection from "../components/ConfirmSelection.jsx";
-import LoadingSpinnerContainer from "../components/LoadingSpinnerContainer.jsx";
+import LoadingScreenContainer from "../components/LoadingScreenContainer.jsx";
 import DubbingTimeline from "../components/DubbingTimeline.jsx";
 
 const EDITOR_SECTIONS = [
@@ -58,6 +59,7 @@ const EditorPage = () => {
   const dispatch = useDispatch();
   const params = useParams();
   const { theme, toggleTheme } = useTheme();
+  const { socket, isConnected, subscribeToJobs } = useSocket() || {};
   const videoRef = useRef(null);
   const waveSurferRef = useRef(null);
   const syncRef = useRef({
@@ -74,7 +76,8 @@ const EditorPage = () => {
     changingLanguage,
     redubbing,
     jobId,
-    targetLanguage
+    targetLanguage,
+    isEditing
   } = useSelector((state) => state.editor);
 
   const [editorSection, setEditorSection] = useState("timeline");
@@ -98,6 +101,7 @@ const EditorPage = () => {
   const [resizingLR, setResizingLR] = useState(false);
   const [resizingAudio, setResizingAudio] = useState(false);
   const [remixing, setRemixing] = useState(false);
+  const [editingStatusText, setEditingStatusText] = useState(null);
   const resizeStartRef = useRef({ x: 0, leftPercent: 50 });
   const audioResizeStartRef = useRef({ y: 0, height: 280 });
   const layoutRef = useRef(null);
@@ -208,6 +212,28 @@ const EditorPage = () => {
     };
     loadCloneStatus();
   }, [video?.id]);
+
+  // Listen for real-time job status updates (e.g. during "Redub entire video")
+  useEffect(() => {
+    if (!socket || !jobId) return;
+
+    const handleJobStatus = (data) => {
+      if (data?.job_id !== jobId) return;
+      const status = (data.status || "").toLowerCase();
+      setEditingStatusText(status);
+
+      // Auto-dismiss loading on terminal states
+      if (["done", "completed", "failed", "cancelled"].includes(status)) {
+        setTimeout(() => {
+          setEditingStatusText(null);
+          dispatch({ type: EDITOR_IDLE });
+        }, 1500);
+      }
+    };
+
+    socket.on("job_status_update", handleJobStatus);
+    return () => socket.off("job_status_update", handleJobStatus);
+  }, [socket, jobId, dispatch]);
 
   const formatDuration = (ms) => {
     if (ms === null || ms === undefined) {
@@ -515,15 +541,24 @@ const EditorPage = () => {
 
   const handleSegmentTimingChange = useCallback(async (segmentId, changes) => {
     if (!segmentId) return;
+    dispatch({ type: EDITOR_BUSY });
     try {
       await dispatch(saveSegmentUpdate(segmentId, changes));
 
       if (changes.is_manual_stretch && video?.id) {
+        // Auto-redub the stretched segment with current DB values
+        try {
+          await redubSegment(segmentId, {});
+        } catch (redubErr) {
+          console.warn("Auto-redub after stretch failed:", redubErr);
+        }
         // Reload to sync ripple effects from backend
-        dispatch(loadEditorByVideoId(video.id));
+        await dispatch(loadEditorByVideoId(video.id));
       }
     } catch (e) {
       showAlert(`Failed to update segment timing: ${e?.message || e}`, "Error");
+    } finally {
+      dispatch({ type: EDITOR_IDLE });
     }
   }, [dispatch, video?.id]);
 
@@ -545,16 +580,20 @@ const EditorPage = () => {
   };
 
   const handleRedub = async (segment) => {
+    dispatch({ type: EDITOR_BUSY });
     try {
       await redubSegment(segment.id, {
         target_text: segment.target_text,
         gender: segment.gender,
+        voice_type: segment.voice_type,
         voice_profile: segment.voice_profile
       });
 
       showAlert("Redub started for this segment. The dubbed media will refresh when done.", "Redub Started");
     } catch (e) {
       showAlert(`Failed to redub segment: ${e?.message || e}`, "Error");
+    } finally {
+      dispatch({ type: EDITOR_IDLE });
     }
   };
 
@@ -585,13 +624,18 @@ const EditorPage = () => {
   const confirmDelete = async (mode) => {
     if (!deleteModal.segmentId) return;
     setDeleteModal({ isOpen: false, segmentId: null });
-    // Pass videoId for reload logic if mode is silence
-    await dispatch(deleteSegmentAction(deleteModal.segmentId, mode, video.id));
+    dispatch({ type: EDITOR_BUSY });
+    try {
+      await dispatch(deleteSegmentAction(deleteModal.segmentId, mode, video.id));
+    } finally {
+      dispatch({ type: EDITOR_IDLE });
+    }
   };
 
   const handleCloneVoice = async (speakerLabel) => {
     if (!video?.id) return;
     setCloningSpeaker(speakerLabel);
+    dispatch({ type: EDITOR_BUSY });
     try {
       await cloneSpeakerVoice(video.id, speakerLabel);
       const res = await fetchCloneStatus(video.id);
@@ -608,6 +652,7 @@ const EditorPage = () => {
       showAlert(`Failed to clone voice: ${e?.response?.data?.detail || e?.message || e}`, "Error");
     } finally {
       setCloningSpeaker(null);
+      dispatch({ type: EDITOR_IDLE });
     }
   };
 
@@ -624,6 +669,7 @@ const EditorPage = () => {
 
   const handleSetSpeakerVoiceProfile = async (speakerLabel, voiceProfile) => {
     if (!video?.id || !voiceProfile) return;
+    dispatch({ type: EDITOR_BUSY });
     try {
       await setSpeakerVoiceProfile(video.id, speakerLabel, voiceProfile);
       dispatch(loadEditorByVideoId(video.id));
@@ -631,6 +677,8 @@ const EditorPage = () => {
       window.location.reload();
     } catch (e) {
       showAlert(`Failed to set voice profile: ${e?.response?.data?.detail || e?.message || e}`, "Error");
+    } finally {
+      dispatch({ type: EDITOR_IDLE });
     }
   };
 
@@ -670,6 +718,7 @@ const EditorPage = () => {
   const runAudioOp = useCallback(async (opName, fn) => {
     if (!video?.id) return;
     setAudioOpInProgress(true);
+    dispatch({ type: EDITOR_BUSY });
     try {
       await fn();
       setAudioCacheBuster((b) => b + 1);
@@ -678,8 +727,9 @@ const EditorPage = () => {
       showAlert(`${opName} failed: ${e?.response?.data?.detail ?? e?.message ?? e}`, "Error");
     } finally {
       setAudioOpInProgress(false);
+      dispatch({ type: EDITOR_IDLE });
     }
-  }, [video?.id]);
+  }, [video?.id, dispatch]);
 
   const handleTrimToSelection = useCallback(() => {
     if (!waveformSelection) return;
@@ -743,6 +793,7 @@ const EditorPage = () => {
   const handleRemix = useCallback(async () => {
     if (!video?.id) return;
     setRemixing(true);
+    dispatch({ type: EDITOR_BUSY });
     try {
       await remixDubbedAudio(video.id);
       setAudioCacheBuster((prev) => prev + 1);
@@ -750,8 +801,9 @@ const EditorPage = () => {
       showAlert(`Remix failed: ${e?.response?.data?.detail ?? e?.message ?? e}`, "Error");
     } finally {
       setRemixing(false);
+      dispatch({ type: EDITOR_IDLE });
     }
-  }, [video?.id]);
+  }, [video?.id, dispatch]);
 
   const handleSegmentVocalGainChange = useCallback(
     (segmentId, value) => {
@@ -864,11 +916,22 @@ const EditorPage = () => {
                 className="button secondary small redub-button"
                 onClick={async () => {
                   if (!video?.id) return;
+                  dispatch({ type: EDITOR_BUSY });
+                  setEditingStatusText("processing");
                   try {
+                    // Subscribe to job socket room for real-time status
+                    if (jobId && isConnected && subscribeToJobs) {
+                      subscribeToJobs([jobId]);
+                    }
                     await dispatch(redubVideoAction(video.id));
+                    setEditingStatusText("done");
                     showAlert("Redub job done! The video has been regenerated with current transcript data.", "Success");
                     setTimeout(() => window.location.reload(), 2000);
-                  } catch (_) { }
+                  } catch (_) {
+                    setEditingStatusText(null);
+                  } finally {
+                    dispatch({ type: EDITOR_IDLE });
+                  }
                 }}
                 disabled={!video?.id || applying || changingLanguage || redubbing}
                 title="Redub video with current transcript"
@@ -878,11 +941,7 @@ const EditorPage = () => {
               </button>
             </div>
           </div>
-          {changingLanguage || redubbing ? (
-            <div className="progress-bar editor-top-progress">
-              <div className="progress-bar__fill" />
-            </div>
-          ) : null}
+
           <nav className="editor-section-nav" aria-label="Editor sections">
             {EDITOR_SECTIONS.map(({ id, label, icon: Icon }) => (
               <button
@@ -897,7 +956,7 @@ const EditorPage = () => {
             ))}
           </nav>
           <div className="editor-section-content">
-            {loading && <Loading message="Loading editor data..." />}
+
             <ErrorBanner message={error} />
             {editorSection === "timeline" && !loading && !error && video && Array.isArray(segments) && segments.length > 0 && (
               <EditorView
@@ -909,8 +968,13 @@ const EditorPage = () => {
                 onReassignSpeaker={handleReassignSpeaker}
                 checkSegmentMismatch={checkSegmentMismatch}
                 onApplyChanges={async (changes) => {
-                  await dispatch(applyChanges(video.id, changes));
-                  window.location.reload();
+                  dispatch({ type: EDITOR_BUSY });
+                  try {
+                    await dispatch(applyChanges(video.id, changes));
+                    window.location.reload();
+                  } finally {
+                    dispatch({ type: EDITOR_IDLE });
+                  }
                 }}
                 applying={applying}
                 changingLanguage={changingLanguage}
@@ -925,15 +989,24 @@ const EditorPage = () => {
                 onSegmentBackgroundGainChange={handleSegmentBackgroundGainChange}
                 onDeleteSegment={handleDeleteSegment}
                 onRedub={async (videoId) => {
+                  dispatch({ type: EDITOR_BUSY });
+                  setEditingStatusText("processing");
                   try {
+                    if (jobId && isConnected && subscribeToJobs) {
+                      subscribeToJobs([jobId]);
+                    }
                     await dispatch(redubVideoAction(videoId));
+                    setEditingStatusText("done");
                     showAlert("Redub job done. The video has been regenerated with current transcript data.", "Success");
-                    // optionally reload after a delay to see updated status
                     setTimeout(() => window.location.reload(), 2000);
                   } catch (error) {
-                    // error is already handled by Redux
+                    setEditingStatusText(null);
+                  } finally {
+                    dispatch({ type: EDITOR_IDLE });
                   }
                 }}
+                onBusy={() => dispatch({ type: EDITOR_BUSY })}
+                onIdle={() => dispatch({ type: EDITOR_IDLE })}
               />
             )}
             {editorSection === "timeline" && !loading && !error && video && (!Array.isArray(segments) || segments.length === 0) && (
@@ -1290,7 +1363,7 @@ const EditorPage = () => {
         theme={theme}
         onConfirm={() => setAlertModal({ ...alertModal, isOpen: false })}
       />
-      <LoadingSpinnerContainer loading={loading} message={remixing ? "Remixing Audio..." : "Processing..."} />
+      <LoadingScreenContainer loading={isEditing} statusText={editingStatusText} />
     </div>
   );
 };

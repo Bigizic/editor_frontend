@@ -29,7 +29,9 @@ const EditorView = ({
   onSegmentVocalGainChange,
   onSegmentBackgroundGainChange,
   onDeleteSegment,
-  onAlert
+  onAlert,
+  onBusy,
+  onIdle
 }) => {
   const LANGUAGE_LABELS = supportedLanguages || {};
   const LANGUAGE_FLAGS = {
@@ -291,6 +293,7 @@ const EditorView = ({
   const handleRetranslate = async (segment, direction) => {
     try {
       setRetranslatingId(segment.id);
+      if (onBusy) onBusy();
 
       let payload = {
         direction,
@@ -317,9 +320,9 @@ const EditorView = ({
       }));
     } catch (e) {
       if (onAlert) onAlert(`Translation failed: ${e.message}`, "Error");
-      else alert(`Translation failed: ${e.message}`);
     } finally {
       setRetranslatingId(null);
+      if (onIdle) onIdle();
     }
   };
 
@@ -390,20 +393,21 @@ const EditorView = ({
   const handleRedubSegment = async (segment) => {
     try {
       setRedubbingId(segment.id);
+      if (onBusy) onBusy();
       const current = edits[segment.id];
       await redubSegment(segment.id, {
         target_text: current?.target_text ?? segment.target_text,
         gender: current?.gender || segment.gender,
+        voice_type: current?.voice_type || segment.voice_type,
         voice_profile: current?.voice_profile ?? segment.voice_profile
       });
       if (onAlert) onAlert("Segment audio redubbed successfully!", "Success");
-      else alert("Segment audio redubbed successfully!");
       window.location.reload();
     } catch (error) {
       if (onAlert) onAlert(`Failed to redub segment: ${error.message}`, "Error");
-      else alert(`Failed to redub segment: ${error.message}`);
     } finally {
       setRedubbingId(null);
+      if (onIdle) onIdle();
     }
   };
 

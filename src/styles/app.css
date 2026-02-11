@@ -2474,3 +2474,90 @@ a {
   gap: 8px;
   margin-bottom: 10px;
 }
+
+/* ── Loading Screen ── */
+
+.loading-screen-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.70);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.loading-screen-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  user-select: none;
+}
+
+.loading-brand {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.loading-brand-letter {
+  display: inline-block;
+  font-size: 48px;
+  font-weight: 800;
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  letter-spacing: 2px;
+  color: #3b82f6;
+  opacity: 0;
+  animation: letterReveal 0.5s ease forwards, letterFloat 2.4s ease-in-out infinite;
+  text-shadow:
+    0 0 12px rgba(59, 130, 246, 0.4),
+    0 0 24px rgba(59, 130, 246, 0.15);
+}
+
+@keyframes letterReveal {
+  0% {
+    opacity: 0;
+    transform: translateY(18px) scale(0.7);
+    filter: blur(4px);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(-4px) scale(1.05);
+    filter: blur(0px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0px);
+  }
+}
+
+@keyframes letterFloat {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+.loading-screen-subtitle {
+  font-size: 14px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.7);
+  letter-spacing: 1.5px;
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  min-width: 90px;
+}
+
+.loading-dots {
+  display: inline-block;
+  min-width: 18px;
+  text-align: left;
+}

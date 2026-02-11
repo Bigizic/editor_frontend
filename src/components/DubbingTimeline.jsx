@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import AudioWaveform from "./AudioWaveform.jsx";
-import Loading from "./Loading.jsx";
 import { FiVolume2, FiMic, FiHeadphones, FiMoreHorizontal, FiVolumeX } from "react-icons/fi";
 import "../styles/DubbingTimeline.css";
 
@@ -19,7 +18,6 @@ const DubbingTimeline = ({
   const [currentTime, setCurrentTime] = useState(0);
   const [zoom, setZoom] = useState(DEFAULT_ZOOM);
   const [isScrubbing, setIsScrubbing] = useState(false);
-  const [scrollLeft, setScrollLeft] = useState(0);
 
   // Refs for event listeners to avoid stale closures
   const isScrubbingRef = useRef(isScrubbing);
@@ -263,10 +261,11 @@ const DubbingTimeline = ({
         // "Almost towards the end" -> e.g. 80% or 50px buffer
         const buffer = 100;
         if (playheadX > currentScroll + containerWidth - buffer) {
-          // Scroll to keep playhead in view, maybe center it or put it at 20%?
-          // "show the other audio area" -> let's advance by a chunk
           const targetScroll = playheadX - (containerWidth * 0.2);
           container.scrollLeft = targetScroll;
+          // Sync ruler
+          const ruler = rulerRef.current;
+          if (ruler) ruler.scrollLeft = container.scrollLeft;
         }
       }
     });
@@ -277,7 +276,11 @@ const DubbingTimeline = ({
   }, [onWaveReady]); // speakers removed from dependency to prevent re-bind iteration; ref handles updates
 
   const handleScroll = (e) => {
-    setScrollLeft(e.target.scrollLeft);
+    const sl = e.target.scrollLeft;
+    // Sync ruler scroll with tracks scroll (single coordinate system)
+    if (rulerRef.current) {
+      rulerRef.current.scrollLeft = sl;
+    }
     if (sidebarRef.current) {
       sidebarRef.current.scrollTop = e.target.scrollTop;
     }
@@ -303,32 +306,51 @@ const DubbingTimeline = ({
 
   const handleRulerMouseDown = (e) => {
     e.preventDefault();
-    setIsScrubbing(true);
-    setZoom(SCRUB_ZOOM);
 
     const container = tracksContainerRef.current;
     if (!container) return;
 
-    // Use SCRUB_ZOOM for calculation since we just set it for render
-    // Also use current scroll (presumed 0 delay since last render unless moving)
-    updateTimeFromMouse(e.clientX, container.scrollLeft, SCRUB_ZOOM);
+    // 1. Compute the time the user clicked at the CURRENT (pre-scrub) zoom
+    const clickTime = getEventTime(e.clientX, container.scrollLeft, zoom);
+
+    // 2. Switch to scrub mode
+    setIsScrubbing(true);
+    setZoom(SCRUB_ZOOM);
+
+    // 3. Scroll both containers so clickTime stays under the cursor
+    const rect = container.getBoundingClientRect();
+    const cursorOffset = e.clientX - rect.left;
+    const newScroll = clickTime * SCRUB_ZOOM - cursorOffset;
+    container.scrollLeft = newScroll;
+    if (rulerRef.current) rulerRef.current.scrollLeft = newScroll;
+
+    // 4. Set the playhead to that exact time
+    if (wavesurfer) {
+      wavesurfer.setTime(clickTime);
+      setCurrentTime(clickTime);
+    }
 
     let animationFrameId;
     let currentClientX = e.clientX;
 
     const tick = () => {
       const rect = container.getBoundingClientRect();
-      const edgeThreshold = 50; // proximity to edge to trigger scroll
-      const scrollSpeed = 15; // px per frame
+      const edgeThreshold = 60;
+      const maxScrollSpeed = 6; // px per frame (smooth, not jumpy)
 
+      // Proportional edge scroll — speed ramps with proximity to edge
       if (currentClientX > rect.right - edgeThreshold) {
-        container.scrollLeft += scrollSpeed;
+        const depth = (currentClientX - (rect.right - edgeThreshold)) / edgeThreshold;
+        container.scrollLeft += Math.ceil(maxScrollSpeed * Math.min(depth, 1));
       } else if (currentClientX < rect.left + edgeThreshold) {
-        container.scrollLeft -= scrollSpeed;
+        const depth = ((rect.left + edgeThreshold) - currentClientX) / edgeThreshold;
+        container.scrollLeft -= Math.ceil(maxScrollSpeed * Math.min(depth, 1));
       }
 
+      // Keep ruler perfectly synced
+      if (rulerRef.current) rulerRef.current.scrollLeft = container.scrollLeft;
+
       // Update time based on new position (mouse moved OR scroll moved)
-      // Always use SCRUB_ZOOM as we are in scrubbing mode
       updateTimeFromMouse(currentClientX, container.scrollLeft, SCRUB_ZOOM);
 
       animationFrameId = requestAnimationFrame(tick);
@@ -342,10 +364,17 @@ const DubbingTimeline = ({
     };
 
     const onMouseUp = () => {
+      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+
+      // Re-center scroll on the playhead at DEFAULT_ZOOM before switching
+      const finalTime = wavesurfer ? wavesurfer.getCurrentTime() : currentTime;
+      const containerWidth = container.clientWidth;
+      const targetScroll = Math.max(0, finalTime * DEFAULT_ZOOM - containerWidth * 0.5);
+      container.scrollLeft = targetScroll;
+      if (rulerRef.current) rulerRef.current.scrollLeft = targetScroll;
+
       setIsScrubbing(false);
       setZoom(DEFAULT_ZOOM);
-
-      if (animationFrameId) cancelAnimationFrame(animationFrameId);
 
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
@@ -452,14 +481,13 @@ const DubbingTimeline = ({
         >
           <div
             className="timeline-ruler-ticks"
-            style={{ width: totalWidth, transform: `translateX(-${scrollLeft}px)` }}
+            style={{ width: totalWidth }}
           >
             {ticks.map((tick) => (
               <div key={tick.time} className={`ruler-tick ${tick.isMajor ? 'major' : 'minor'}`} style={{ left: tick.left }}>
                 {tick.isMajor ? formatTime(tick.time) : ''}
               </div>
             ))}
-            {/* Ruler Playhead - Moved inside ticks to sync with scroll & offset */}
             <div className="playhead-triangle" style={{ left: currentTime * zoom }} />
           </div>
         </div>

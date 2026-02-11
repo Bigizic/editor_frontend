@@ -235,10 +235,18 @@
   flex: 1;
   height: 100%;
   position: relative;
-  overflow: hidden;
-  /* Clip the ticks here! */
+  overflow-x: auto;
+  overflow-y: hidden;
   cursor: ew-resize;
-  /* background: var(--editor-bg);  Inherit or set explicitly */
+  scrollbar-width: none;
+  /* Firefox */
+  -ms-overflow-style: none;
+  /* IE/Edge */
+}
+
+.ruler-scroll-container::-webkit-scrollbar {
+  display: none;
+  /* Chrome/Safari */
 }
 
 .timeline-ruler-ticks {
@@ -365,12 +373,13 @@
 .playhead-line {
   position: absolute;
   left: 0;
-  /* Centered on the translateX */
   top: 0;
   bottom: 0;
   width: 2px;
   background-color: #ef4444;
   transform: translateX(-50%);
+  z-index: 20;
+  pointer-events: none;
 }
 
 .playhead-triangle {
@@ -382,8 +391,20 @@
   border-left: 6px solid transparent;
   border-right: 6px solid transparent;
   border-top: 8px solid #ef4444;
-  /* Inverted triangle pointing down? Or regular on top? Usually pointing down from ruler */
   transform: translateX(-50%);
+  z-index: 32;
+}
+
+/* Stem line extending from the ruler triangle down through the ruler bar */
+.playhead-triangle::after {
+  content: '';
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 2px;
+  height: 24px;
+  background-color: #ef4444;
 }
 
 .scrub-overlay {
