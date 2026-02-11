@@ -61,17 +61,23 @@ const DubbingTimeline = ({
     return speakers.flatMap(sp => sp.segments || []).sort((a, b) => a.order_index - b.order_index);
   }, [speakers]);
 
-  // Handle Resize Start
-  const handleResizeStart = (e, segment, edge) => {
+  // Handle Drag Start (Resize or Move)
+  const handleDragStart = (e, segment, action) => {
     e.stopPropagation();
     e.preventDefault();
+    if (action === 'move') {
+      // Only drag with left mouse button
+      if (e.button !== 0) return;
+    }
+
     setDragging({
       segmentId: segment.id,
-      edge,
+      action, // 'start', 'end', or 'move'
       initialX: e.clientX,
       initialStart: segment.start_time_ms,
       initialEnd: segment.end_time_ms,
-      originalSegment: segment
+      originalSegment: segment,
+      deltaMs: 0
     });
   };
 
@@ -91,37 +97,49 @@ const DubbingTimeline = ({
 
     const onMouseUp = async () => {
       // Commit change
-      if (dragging && dragging.deltaMs) {
-        const { segmentId, edge, initialStart, initialEnd, deltaMs } = dragging;
+      if (dragging) {
+        const { segmentId, action, initialStart, initialEnd, deltaMs, originalSegment } = dragging;
 
-        // Calculate final values (rounded to integer ms)
-        let newStart = initialStart;
-        let newEnd = initialEnd;
+        // check if it was just a click (tiny movement)
+        const isClick = Math.abs(deltaMs) < 50; // 50ms tolerance
 
-        if (edge === 'start') {
-          newStart = Math.round(initialStart + deltaMs);
-        } else {
-          newEnd = Math.round(initialEnd + deltaMs);
+        if (action === 'move' && isClick) {
+          // Treat as click -> Play segment
+          if (wavesurfer) {
+            wavesurfer.play(initialStart / 1000, initialEnd / 1000);
+          }
+          setDragging(null);
+          return;
         }
 
-        // Basic validation
-        if (newEnd > newStart + 100) { // minimum 100ms duration
-          if (onSegmentUpdate) {
-            // Trigger update with is_manual_stretch=true
-            // If dragging 'end', it's a stretch/compress
-            // If dragging 'start', standard move? Or also stretch? 
-            // User request specifically mentioned "manual stretch and compress".
-            // Usually stretch is changing duration.
+        if (Math.abs(deltaMs) > 0) {
+          // Calculate final key values
+          let newStart = initialStart;
+          let newEnd = initialEnd;
 
-            // If we change END, we are changing duration -> Stretch.
-            // If we change START, we are also changing duration -> Stretch.
-            // Both should trigger manual stretch logic if duration changes.
+          if (action === 'start') {
+            newStart = Math.round(initialStart + deltaMs);
+          } else if (action === 'end') {
+            newEnd = Math.round(initialEnd + deltaMs);
+          } else if (action === 'move') {
+            newStart = Math.round(initialStart + deltaMs);
+            newEnd = Math.round(initialEnd + deltaMs);
+          }
 
-            onSegmentUpdate(segmentId, {
-              start_time_ms: newStart,
-              end_time_ms: newEnd,
-              is_manual_stretch: true
-            });
+          // Validation
+          if (newEnd > newStart + 100 && newStart >= 0) {
+            if (onSegmentUpdate) {
+              // Determine flags
+              const isResize = action === 'start' || action === 'end';
+              const isMove = action === 'move';
+
+              onSegmentUpdate(segmentId, {
+                start_time_ms: newStart,
+                end_time_ms: newEnd,
+                is_manual_stretch: isResize,
+                is_manual_move: isMove
+              });
+            }
           }
         }
       }
@@ -134,26 +152,36 @@ const DubbingTimeline = ({
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
     };
-  }, [dragging, zoom, onSegmentUpdate]);
+  }, [dragging, zoom, onSegmentUpdate, wavesurfer]);
 
   // Helper to get effective segment timing (considering drag & ripple)
   const getRenderTiming = (segment) => {
     // 1. If this is the dragged segment
     if (dragging && dragging.segmentId === segment.id) {
-      if (dragging.edge === 'start') {
+      const shift = dragging.deltaMs || 0;
+      if (dragging.action === 'move') {
         return {
-          start: Math.max(0, dragging.initialStart + (dragging.deltaMs || 0)),
+          start: Math.max(0, dragging.initialStart + shift),
+          end: Math.max(100, dragging.initialEnd + shift)
+        };
+      } else if (dragging.action === 'start') {
+        return {
+          start: Math.max(0, dragging.initialStart + shift),
           end: dragging.initialEnd
         };
-      } else {
+      } else { // end
         return {
           start: dragging.initialStart,
-          end: Math.max(dragging.initialStart + 100, dragging.initialEnd + (dragging.deltaMs || 0))
+          end: Math.max(dragging.initialStart + 100, dragging.initialEnd + shift)
         };
       }
     }
 
-    // 2. If this segment is AFTER the dragged segment (Ripple Effect)
+    // 2. Ripple Logic (only applies if drag affects neighbors)
+    // Simplified: No auto-ripple on move for now to avoid chaos, unless requested.
+    // Keeping existing ripple logic for 'end' resize only?
+    // User didn't explicitly ask for ripple on drag-move, just "move".
+    // Existing ripple logic was:
     // Only ripple if we are stretching (changing END time of dragged segment)
     // If we move START of dragged segment, does it ripple?
     // "Stretch and compress" usually implies changing the TAIL.
@@ -176,7 +204,7 @@ const DubbingTimeline = ({
         // Logic: Changing Start of Seg A usually affects Seg A's duration. It doesn't necessarily push Seg B.
         // Logic: Changing End of Seg A directly pushes Seg B.
 
-        if (dragging.edge === 'end') {
+        if (dragging.action === 'end') {
           const shift = dragging.deltaMs || 0;
           return {
             start: segment.start_time_ms + shift,
@@ -421,14 +449,7 @@ const DubbingTimeline = ({
     setSolodSpeakers(prev => ({ ...prev, [label]: !prev[label] }));
   };
 
-  const handleSegmentClick = (e, seg) => {
-    e.stopPropagation();
-    if (wavesurfer) {
-      const start = seg.start_time_ms / 1000;
-      const end = seg.end_time_ms / 1000;
-      wavesurfer.play(start, end);
-    }
-  };
+
 
   const playSpeakerAll = (speakerLabel) => {
     const newSoloState = { [speakerLabel]: true };
@@ -471,7 +492,10 @@ const DubbingTimeline = ({
 
   return (
     <div className="dubbing-timeline-card">
-      <div className={`scrub-overlay ${isScrubbing || dragging ? 'active' : ''}`} style={{ cursor: dragging ? 'col-resize' : 'ew-resize' }} />
+      <div
+        className={`scrub-overlay ${isScrubbing || dragging ? 'active' : ''}`}
+        style={{ cursor: dragging && dragging.action === 'move' ? 'grabbing' : (dragging ? 'col-resize' : 'ew-resize') }}
+      />
       <div className="timeline-ruler-fixed">
         <div className="ruler-sidebar-placeholder" />
         <div
@@ -600,7 +624,7 @@ const DubbingTimeline = ({
                           className={`segment-clip dubbed ${colorClass} ${dragging && dragging.segmentId === seg.id ? 'dragging' : ''}`}
                           style={{ left, width, overflow: 'visible' }} // Overflow visible for handles
                           title={`Dubbed: ${seg.target_text}`}
-                          onClick={(e) => handleSegmentClick(e, seg)}
+                          onMouseDown={(e) => handleDragStart(e, seg, 'move')}
                         >
                           {/* Handles */}
                           <div
@@ -609,7 +633,7 @@ const DubbingTimeline = ({
                               position: 'absolute', left: 0, top: 0, bottom: 0, width: 8,
                               cursor: 'w-resize', zIndex: 10
                             }}
-                            onMouseDown={(e) => handleResizeStart(e, seg, 'start')}
+                            onMouseDown={(e) => handleDragStart(e, seg, 'start')}
                           />
 
                           <span className="segment-text" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', width: '100%', paddingLeft: 8, paddingRight: 8 }}>
@@ -622,7 +646,7 @@ const DubbingTimeline = ({
                               position: 'absolute', right: 0, top: 0, bottom: 0, width: 8,
                               cursor: 'e-resize', zIndex: 10
                             }}
-                            onMouseDown={(e) => handleResizeStart(e, seg, 'end')}
+                            onMouseDown={(e) => handleDragStart(e, seg, 'end')}
                           />
                         </div>
                       );

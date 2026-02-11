@@ -545,14 +545,19 @@ const EditorPage = () => {
     try {
       await dispatch(saveSegmentUpdate(segmentId, changes));
 
-      if (changes.is_manual_stretch && video?.id) {
-        // Auto-redub the stretched segment with current DB values
+      if ((changes.is_manual_stretch || changes.is_manual_move) && video?.id) {
+        // Auto-redub and remix on manual timing changes
+        // "Stretch" changes duration -> needs TTS regen
+        // "Move" changes context -> might benefit from TTS regen
+        // Both require remixing the full audio track to hear the change
         try {
           await redubSegment(segmentId, {});
+          await remixDubbedAudio(video.id);
+          setAudioCacheBuster((p) => p + 1);
         } catch (redubErr) {
-          console.warn("Auto-redub after stretch failed:", redubErr);
+          console.warn("Auto-redub/remix after manual change failed:", redubErr);
         }
-        // Reload to sync ripple effects from backend
+        // Reload to sync ripple effects and ensure frontend state matches backend
         await dispatch(loadEditorByVideoId(video.id));
       }
     } catch (e) {
