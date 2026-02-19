@@ -1,18 +1,20 @@
-import React, { useEffect, useRef, useState, useMemo, useCallback } from "react";
+import React, { useEffect, useRef, useState, useMemo, useCallback, forwardRef, useImperativeHandle } from "react";
 import AudioWaveform from "./AudioWaveform.jsx";
+import SecondaryMouse from "./SecondaryMouse.jsx";
 import { FiVolume2, FiMic, FiHeadphones, FiMoreHorizontal, FiVolumeX } from "react-icons/fi";
 import "../styles/DubbingTimeline.css";
 
 const DEFAULT_ZOOM = 50; // pixels per second
 const SCRUB_ZOOM = 150; // pixels per second when scrubbing
 
-const DubbingTimeline = ({
+const DubbingTimeline = forwardRef(({
   audioUrl,
   speakers = [],
   onWaveReady,
   onSelectionChange,
-  onSegmentUpdate
-}) => {
+  onSegmentUpdate,
+  isEditing
+}, ref) => {
   const [wavesurfer, setWavesurfer] = useState(null);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
@@ -22,6 +24,15 @@ const DubbingTimeline = ({
   // Refs for event listeners to avoid stale closures
   const isScrubbingRef = useRef(isScrubbing);
   const zoomRef = useRef(zoom);
+
+  useImperativeHandle(ref, () => ({
+    clearRegions: () => {
+      if (wavesurfer && wavesurfer.regions) {
+        wavesurfer.regions.clearRegions();
+      }
+    }
+  }));
+
 
   useEffect(() => { isScrubbingRef.current = isScrubbing; }, [isScrubbing]);
   useEffect(() => { zoomRef.current = zoom; }, [zoom]);
@@ -40,6 +51,8 @@ const DubbingTimeline = ({
   const tracksContainerRef = useRef(null);
   const sidebarRef = useRef(null);
   const rulerRef = useRef(null);
+  const topScrollRef = useRef(null);
+  const scrollSyncSource = useRef(null); // prevents infinite scroll loops
 
   // Sync refs
   useEffect(() => {
@@ -54,7 +67,15 @@ const DubbingTimeline = ({
     speakersRef.current = speakers;
   }, [speakers]);
 
+  const [contextMenu, setContextMenu] = useState(null);
+  const [selectedSegmentId, setSelectedSegmentId] = useState(null);
   const [dragging, setDragging] = useState(null); // { segmentId, edge: 'start'|'end', initialX, initialTime, originalSegment }
+  const draggingRef = useRef(dragging); // Track live drag state for event handlers
+
+  // Sync dragging state to ref (for render updates or external resets)
+  useEffect(() => {
+    draggingRef.current = dragging;
+  }, [dragging]);
 
   // Create a flattened list of all segments for easier ripple calculation
   const allSegments = useMemo(() => {
@@ -65,12 +86,13 @@ const DubbingTimeline = ({
   const handleDragStart = (e, segment, action) => {
     e.stopPropagation();
     e.preventDefault();
+    if (isEditing) return; // Block during editor actions
     if (action === 'move') {
       // Only drag with left mouse button
       if (e.button !== 0) return;
     }
 
-    setDragging({
+    const dragData = {
       segmentId: segment.id,
       action, // 'start', 'end', or 'move'
       initialX: e.clientX,
@@ -78,36 +100,48 @@ const DubbingTimeline = ({
       initialEnd: segment.end_time_ms,
       originalSegment: segment,
       deltaMs: 0
-    });
+    };
+    draggingRef.current = dragData;
+    setDragging(dragData);
   };
 
   // Global Mouse Handlers for Dragging
   useEffect(() => {
+    // Only bind listeners if we are dragging (check state or ref)
+    // We use state to trigger effect mount/unmount logic
     if (!dragging) return;
 
     const onMouseMove = (e) => {
-      if (!tracksContainerRef.current) return;
+      if (!tracksContainerRef.current || !draggingRef.current) return;
 
-      const deltaPx = e.clientX - dragging.initialX;
+      const deltaPx = e.clientX - draggingRef.current.initialX;
       // Convert px to ms: deltaPx / zoom * 1000
       const deltaMs = (deltaPx / zoom) * 1000;
 
+      // Update ref immediately for synchronous access in mouseup
+      draggingRef.current = { ...draggingRef.current, deltaMs };
+
+      // Update state for UI render
       setDragging(prev => ({ ...prev, deltaMs }));
     };
 
     const onMouseUp = async () => {
       // Commit change
-      if (dragging) {
-        const { segmentId, action, initialStart, initialEnd, deltaMs, originalSegment } = dragging;
+      const currentDrag = draggingRef.current;
+
+      if (currentDrag) {
+        const { segmentId, action, initialStart, initialEnd, deltaMs, originalSegment } = currentDrag;
 
         // check if it was just a click (tiny movement)
         const isClick = Math.abs(deltaMs) < 50; // 50ms tolerance
 
         if (action === 'move' && isClick) {
-          // Treat as click -> Play segment
+          // Treat as click -> Select segment & play it
+          setSelectedSegmentId(segmentId);
           if (wavesurfer) {
             wavesurfer.play(initialStart / 1000, initialEnd / 1000);
           }
+          draggingRef.current = null;
           setDragging(null);
           return;
         }
@@ -137,12 +171,15 @@ const DubbingTimeline = ({
                 start_time_ms: newStart,
                 end_time_ms: newEnd,
                 is_manual_stretch: isResize,
-                is_manual_move: isMove
+                is_manual_move: isMove,
+                prev_segment_start_ms: originalSegment.start_time_ms,
+                prev_segment_end_ms: originalSegment.end_time_ms
               });
             }
           }
         }
       }
+      draggingRef.current = null;
       setDragging(null);
     };
 
@@ -152,7 +189,10 @@ const DubbingTimeline = ({
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
     };
-  }, [dragging, zoom, onSegmentUpdate, wavesurfer]);
+    // Re-bind only if dragging STARTS (dragging becomes truthy)
+    // We key off '!!dragging' effectively. 
+    // We add 'zoom' because deltaMs calculation depends on zoom.
+  }, [!!dragging, zoom, onSegmentUpdate, wavesurfer]);
 
   // Helper to get effective segment timing (considering drag & ripple)
   const getRenderTiming = (segment) => {
@@ -291,9 +331,9 @@ const DubbingTimeline = ({
         if (playheadX > currentScroll + containerWidth - buffer) {
           const targetScroll = playheadX - (containerWidth * 0.2);
           container.scrollLeft = targetScroll;
-          // Sync ruler
-          const ruler = rulerRef.current;
-          if (ruler) ruler.scrollLeft = container.scrollLeft;
+          // Sync ruler + top scrollbar
+          if (rulerRef.current) rulerRef.current.scrollLeft = container.scrollLeft;
+          if (topScrollRef.current) topScrollRef.current.scrollLeft = container.scrollLeft;
         }
       }
     });
@@ -304,14 +344,14 @@ const DubbingTimeline = ({
   }, [onWaveReady]); // speakers removed from dependency to prevent re-bind iteration; ref handles updates
 
   const handleScroll = (e) => {
+    if (scrollSyncSource.current && scrollSyncSource.current !== e.target) return;
+    scrollSyncSource.current = e.target;
     const sl = e.target.scrollLeft;
-    // Sync ruler scroll with tracks scroll (single coordinate system)
-    if (rulerRef.current) {
-      rulerRef.current.scrollLeft = sl;
-    }
-    if (sidebarRef.current) {
-      sidebarRef.current.scrollTop = e.target.scrollTop;
-    }
+    if (rulerRef.current && rulerRef.current !== e.target) rulerRef.current.scrollLeft = sl;
+    if (tracksContainerRef.current && tracksContainerRef.current !== e.target) tracksContainerRef.current.scrollLeft = sl;
+    if (topScrollRef.current && topScrollRef.current !== e.target) topScrollRef.current.scrollLeft = sl;
+    if (sidebarRef.current) sidebarRef.current.scrollTop = e.target.scrollTop;
+    requestAnimationFrame(() => { scrollSyncSource.current = null; });
   };
 
   // Helper for converting mouse X to time, with optional zoom/scroll overrides
@@ -351,6 +391,7 @@ const DubbingTimeline = ({
     const newScroll = clickTime * SCRUB_ZOOM - cursorOffset;
     container.scrollLeft = newScroll;
     if (rulerRef.current) rulerRef.current.scrollLeft = newScroll;
+    if (topScrollRef.current) topScrollRef.current.scrollLeft = newScroll;
 
     // 4. Set the playhead to that exact time
     if (wavesurfer) {
@@ -417,22 +458,76 @@ const DubbingTimeline = ({
 
   const ticks = useMemo(() => {
     if (!duration) return [];
-    const step = zoom > 100 ? 0.2 : 1;
+
+    // desired spacing in pixels
+    const minLabelSpacing = 70;
+    const minTickSpacing = 20;
+
+    // candidates for intervals
+    const intervals = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60];
+
+    // Find best label interval
+    let labelInterval = 60;
+    for (let val of intervals) {
+      if (val * zoom >= minLabelSpacing) {
+        labelInterval = val;
+        break;
+      }
+    }
+
+    // Find best tick interval
+    let tickInterval = 1;
+    for (let val of intervals) {
+      if (val * zoom >= minTickSpacing) {
+        tickInterval = val;
+        break;
+      }
+    }
+
+    // Ensure tick matches label hierarchy (avoid weird offsets)
+    if (labelInterval < tickInterval) tickInterval = labelInterval;
+
     const generated = [];
-    for (let t = 0; t <= duration; t += step) {
+    // Iterate using integers to avoid float drift, then scale
+    // e.g. if tickInterval is 0.1, we count in 1/10ths? 
+    // Easier: just loop with a small epsilon
+
+    // Safety check to prevent infinite loop
+    if (tickInterval <= 0) tickInterval = 1;
+
+    for (let t = 0; t <= duration + tickInterval; t += tickInterval) {
+      // Fix float precision issues (e.g. 0.300000004)
+      const time = Math.round(t * 100) / 100;
+      if (time > duration) break;
+
+      // Check if this is a label position
+      // e.g. time % labelInterval < epsilon
+      // But doing modulo on floats is messy.
+      // Instead check proximity to multiple of labelInterval
+      const steps = time / labelInterval;
+      const isMajor = Math.abs(steps - Math.round(steps)) < 0.001;
+
       generated.push({
-        time: t,
-        left: t * zoom,
-        isMajor: Number.isInteger(t)
+        time,
+        left: time * zoom,
+        isMajor,
+        precision: labelInterval < 1 ? 1 : 0
       });
     }
     return generated;
   }, [duration, zoom]);
 
-  const formatTime = (sec) => {
+  const formatTime = (sec, precision = 0) => {
     const m = Math.floor(sec / 60);
     const s = Math.floor(sec % 60);
-    return `${m}:${s.toString().padStart(2, '0')}`;
+    const base = `${m}:${s.toString().padStart(2, '0')}`;
+
+    if (precision > 0) {
+      // Extract decimal part
+      const decimalPart = (sec % 1).toFixed(precision).substring(1); // .5 or .50
+      return `${base}${decimalPart}`;
+    }
+    return base;
   };
 
   const getSpeakerColorClass = (index) => index % 2 === 0 ? '' : 'speaker-2';
@@ -490,12 +585,58 @@ const DubbingTimeline = ({
     }
   };
 
+  const handleTimelineContextMenu = (e) => {
+    e.preventDefault();
+    if (isEditing) return; // Block during editor actions
+    if (!tracksContainerRef.current) return;
+    const rect = tracksContainerRef.current.getBoundingClientRect();
+    const scrollLeft = tracksContainerRef.current.scrollLeft;
+    const x = e.clientX - rect.left + scrollLeft;
+    const ms = (x / zoom) * 1000;
+
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      timeMs: ms
+    });
+  };
+
+  const handleSilenceOption = () => {
+    if (!wavesurfer || !contextMenu) return;
+    const start = Math.max(0, (contextMenu.timeMs - 1000) / 1000);
+    const end = (contextMenu.timeMs + 1000) / 1000;
+
+    if (wavesurfer.regions) {
+      wavesurfer.regions.clearRegions();
+      wavesurfer.regions.addRegion({
+        start,
+        end,
+        color: 'rgba(255, 0, 0, 0.3)',
+        drag: true,
+        resize: true
+      });
+    }
+    setContextMenu(null);
+  };
+
+  const menuItems = [
+    {
+      label: "Silence Audio",
+      icon: <FiVolumeX />,
+      onClick: handleSilenceOption,
+      danger: true
+    }
+  ];
+
   return (
     <div className="dubbing-timeline-card">
       <div
         className={`scrub-overlay ${isScrubbing || dragging ? 'active' : ''}`}
         style={{ cursor: dragging && dragging.action === 'move' ? 'grabbing' : (dragging ? 'col-resize' : 'ew-resize') }}
       />
+      <div className="timeline-top-scrollbar" ref={topScrollRef} onScroll={handleScroll}>
+        <div style={{ width: totalWidth, height: 1 }} />
+      </div>
       <div className="timeline-ruler-fixed">
         <div className="ruler-sidebar-placeholder" />
         <div
@@ -509,7 +650,7 @@ const DubbingTimeline = ({
           >
             {ticks.map((tick) => (
               <div key={tick.time} className={`ruler-tick ${tick.isMajor ? 'major' : 'minor'}`} style={{ left: tick.left }}>
-                {tick.isMajor ? formatTime(tick.time) : ''}
+                {tick.isMajor ? formatTime(tick.time, tick.precision) : ''}
               </div>
             ))}
             <div className="playhead-triangle" style={{ left: currentTime * zoom }} />
@@ -594,11 +735,18 @@ const DubbingTimeline = ({
         </div>
 
         <div className="timeline-content">
-          <div className="timeline-tracks-scrollable" ref={tracksContainerRef} onScroll={handleScroll}>
+          <div
+            className="timeline-tracks-scrollable"
+            ref={tracksContainerRef}
+            onScroll={handleScroll}
+          >
             <div style={{ width: totalWidth, position: 'relative' }}>
               <div className="playhead-line" style={{ left: currentTime * zoom }} />
 
-              <div className="track-lane background-track">
+              <div
+                className="track-lane background-track"
+                onContextMenu={handleTimelineContextMenu}
+              >
                 <div style={{ width: '100%', height: '100%' }}>
                   <AudioWaveform
                     audioUrl={audioUrl}
@@ -613,41 +761,42 @@ const DubbingTimeline = ({
               {speakers.map((sp, idx) => {
                 const colorClass = getSpeakerColorClass(idx);
                 return (
-                  <div key={sp.label || idx} className="track-lane">
+                  <div
+                    key={sp.label || idx}
+                    className={`track-lane ${isEditing ? 'track-editing-muted' : ''}`}
+                    onMouseDown={() => setSelectedSegmentId(null)}
+                  >
                     {sp.segments && sp.segments.map(seg => {
                       const { start, end } = getRenderTiming(seg);
                       const width = (end - start) / 1000 * zoom;
                       const left = start / 1000 * zoom;
+                      const isSelected = selectedSegmentId === seg.id;
+                      const isDragging = dragging && dragging.segmentId === seg.id;
                       return (
                         <div
                           key={seg.id}
-                          className={`segment-clip dubbed ${colorClass} ${dragging && dragging.segmentId === seg.id ? 'dragging' : ''}`}
-                          style={{ left, width, overflow: 'visible' }} // Overflow visible for handles
+                          className={`segment-clip dubbed ${colorClass}${isDragging ? ' dragging' : ''}${isSelected ? ' selected' : ''}`}
+                          style={{ left, width }}
                           title={`Dubbed: ${seg.target_text}`}
-                          onMouseDown={(e) => handleDragStart(e, seg, 'move')}
+                          onMouseDown={(e) => { e.stopPropagation(); handleDragStart(e, seg, 'move'); }}
                         >
-                          {/* Handles */}
                           <div
-                            className="resize-handle left-handle"
-                            style={{
-                              position: 'absolute', left: 0, top: 0, bottom: 0, width: 8,
-                              cursor: 'w-resize', zIndex: 10
-                            }}
+                            className="trim-handle trim-handle-left"
                             onMouseDown={(e) => handleDragStart(e, seg, 'start')}
-                          />
+                          >
+                            <span className="trim-grip" />
+                          </div>
 
-                          <span className="segment-text" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', width: '100%', paddingLeft: 8, paddingRight: 8 }}>
+                          <span className="segment-text">
                             {seg.target_text || "..."}
                           </span>
 
                           <div
-                            className="resize-handle right-handle"
-                            style={{
-                              position: 'absolute', right: 0, top: 0, bottom: 0, width: 8,
-                              cursor: 'e-resize', zIndex: 10
-                            }}
+                            className="trim-handle trim-handle-right"
                             onMouseDown={(e) => handleDragStart(e, seg, 'end')}
-                          />
+                          >
+                            <span className="trim-grip" />
+                          </div>
                         </div>
                       );
                     })}
@@ -658,8 +807,14 @@ const DubbingTimeline = ({
           </div>
         </div>
       </div>
+      {/* Render SecondaryMouse if contextMenu is active */}
+      <SecondaryMouse
+        position={contextMenu}
+        items={menuItems}
+        onClose={() => setContextMenu(null)}
+      />
     </div>
   );
-};
+});
 
 export default DubbingTimeline;

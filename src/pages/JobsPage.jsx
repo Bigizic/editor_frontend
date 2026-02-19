@@ -4,8 +4,7 @@ import { useNavigate } from "react-router-dom";
 import {
   loadUserJobs,
   removeJob,
-  setJobNotifications,
-  setJobStatusBulk
+  setJobNotifications
 } from "../redux/actions/jobActions.js";
 import { submitJob } from "../redux/actions/dubbingActions.js";
 import JobsGrid from "../components/JobsGrid.jsx";
@@ -14,9 +13,20 @@ import ErrorBanner from "../components/ErrorBanner.jsx";
 import DubbingForm from "../components/DubbingForm.jsx";
 import { useSocket } from "../Socket/index.jsx";
 import { fetchJobStatus } from "../api/jobsApi.js";
-
-const DEFAULT_USER_ID = "111";
-const ACTIVE_JOB_STORAGE_KEY = `dubbing_active_job_${DEFAULT_USER_ID}`;
+import { formatStatusText } from "../utils/formatStatusText.js";
+import {
+  getActiveJobStorageKey,
+  getActiveEditorJobStorageKey,
+  DEFAULT_USER_ID
+} from "../helpers/storageKeys.js";
+import {
+  hydrateFromStoredJob,
+  initializeNotificationsFromActiveJobs,
+  handleNewJobSubmission,
+  loadActiveJobFromStorage,
+  syncActiveJobStorage,
+  setupJobStatusSocketListener
+} from "../helpers/jobSubscriptionHelpers.js";
 
 const JobsPage = () => {
   const dispatch = useDispatch();
@@ -27,44 +37,6 @@ const JobsPage = () => {
   const dubbingState = useSelector((state) => state.dubbing);
   const { socket, isConnected, subscribeToJobs } = useSocket() || {};
 
-  // On mount: hydrate from stored job id
-  useEffect(() => {
-    const storedJobId = localStorage.getItem(ACTIVE_JOB_STORAGE_KEY);
-    if (!storedJobId) return;
-
-    const hydrate = async () => {
-      try {
-        const statusData = await fetchJobStatus(storedJobId);
-        const status = (statusData.status || "queued").toLowerCase();
-        const progress = statusData.progress_percentage || 0;
-
-        dispatch(
-          setJobNotifications([
-            { job_id: storedJobId, status, progress },
-          ])
-        );
-
-        if (["done", "completed", "failed", "cancelled"].includes(status)) {
-          localStorage.removeItem(ACTIVE_JOB_STORAGE_KEY);
-        } else {
-          localStorage.setItem(ACTIVE_JOB_STORAGE_KEY, storedJobId);
-        }
-      } catch (err) {
-        dispatch(
-          setJobNotifications([
-            { job_id: storedJobId, status: "queued", progress: 0 },
-          ])
-        );
-      }
-    };
-
-    hydrate();
-  }, [dispatch]);
-
-  useEffect(() => {
-    dispatch(loadUserJobs(DEFAULT_USER_ID));
-  }, [dispatch]);
-
   const activeJobs = useMemo(
     () =>
       jobs.filter((job) => {
@@ -74,159 +46,66 @@ const JobsPage = () => {
     [jobs]
   );
 
-  // initialize notifications for active job when jobs load
+  // On mount: hydrate from stored job id
   useEffect(() => {
-    const storedJobId = localStorage.getItem(ACTIVE_JOB_STORAGE_KEY);
-    if (!storedJobId) {
-      return;
-    }
-
-    const matchedJob = activeJobs.find(
-      (job) => (job.job_id || job.id) === storedJobId
-    );
-    const status = (matchedJob?.status || matchedJob?.job_status || "queued").toLowerCase();
-    const progress = matchedJob?.progress_percentage || 0;
-
-    dispatch(setJobNotifications([
-      {
-        job_id: storedJobId,
-        status,
-        progress,
-      },
-    ]));
-  }, [activeJobs, dispatch]);
-
-  useEffect(() => {
-    if (dubbingState.lastSubmission?.job_id) {
-      const newJobId = dubbingState.lastSubmission.job_id;
-
-      // add initial notification for the new job
-      const newNotification = {
-        job_id: newJobId,
-        status: "queued",
-        progress: 0,
-      };
-
-      dispatch(setJobNotifications([newNotification]));
-      localStorage.setItem(ACTIVE_JOB_STORAGE_KEY, newJobId);
-
-      // optional: subscribe to the newly submitted job immediately
-      if (isConnected && subscribeToJobs) {
-        console.log("Subscribing to new job:", newJobId);
-        subscribeToJobs([newJobId]);
-      }
-
-      // reload jobs to get the new one in the list
-      dispatch(loadUserJobs(DEFAULT_USER_ID));
-    }
-  }, [dispatch, dubbingState.lastSubmission, isConnected, subscribeToJobs]);
-
-  // load active job from localStorage on mount
-  useEffect(() => {
-    try {
-      const storedJobId = localStorage.getItem(ACTIVE_JOB_STORAGE_KEY);
-      if (storedJobId) {
-        dispatch(setJobNotifications([
-          {
-            job_id: storedJobId,
-            status: "queued",
-            progress: 0,
-          },
-        ]));
-      }
-    } catch (error) {
-      console.error("Failed to load notifications from localStorage:", error);
-    }
+    const storedJobId = localStorage.getItem(getActiveJobStorageKey(DEFAULT_USER_ID));
+    if (!storedJobId) return;
+    hydrateFromStoredJob(storedJobId, dispatch, {
+      fetchJobStatus,
+      userId: DEFAULT_USER_ID
+    });
   }, [dispatch]);
 
-  // clear active job storage when job completes/fails/cancels
+  // Load user jobs on mount
   useEffect(() => {
-    if (notifications.length === 0) {
-      localStorage.removeItem(ACTIVE_JOB_STORAGE_KEY);
-      return;
-    }
+    dispatch(loadUserJobs(DEFAULT_USER_ID));
+  }, [dispatch]);
 
-    const active = notifications.find((n) => n?.job_id);
-    if (!active) {
-      localStorage.removeItem(ACTIVE_JOB_STORAGE_KEY);
-      return;
-    }
+  // Initialize notifications for active job when jobs load
+  useEffect(() => {
+    const storedJobId = localStorage.getItem(getActiveJobStorageKey(DEFAULT_USER_ID));
+    initializeNotificationsFromActiveJobs(activeJobs, storedJobId, dispatch);
+  }, [activeJobs, dispatch]);
 
-    const status = (active.status || "").toLowerCase();
-    if (["done", "completed", "failed", "cancelled"].includes(status)) {
-      localStorage.removeItem(ACTIVE_JOB_STORAGE_KEY);
-      dispatch(setJobNotifications([]));
-    } else {
-      localStorage.setItem(ACTIVE_JOB_STORAGE_KEY, active.job_id);
-    }
+  // Handle new job submission
+  useEffect(() => {
+    const jobId = dubbingState.lastSubmission?.job_id;
+    if (!jobId) return;
+
+    handleNewJobSubmission({
+      jobId,
+      userId: DEFAULT_USER_ID,
+      dispatch,
+      subscribeToJobs,
+      isConnected
+    });
+  }, [dispatch, dubbingState.lastSubmission?.job_id, isConnected, subscribeToJobs]);
+
+  // Load active job from localStorage on mount
+  useEffect(() => {
+    const storedJobId = localStorage.getItem(getActiveJobStorageKey(DEFAULT_USER_ID));
+    loadActiveJobFromStorage(storedJobId, dispatch);
+  }, [dispatch]);
+
+  // Sync localStorage when notifications change (clear when job completes)
+  useEffect(() => {
+    syncActiveJobStorage(notifications, dispatch, DEFAULT_USER_ID);
   }, [dispatch, notifications]);
 
-  // socket.IO listener registration (connection handled by SocketProvider)
+  // Socket listener + re-subscribe on connect
   useEffect(() => {
-    let isMounted = true;
-
-    if (!socket || !isConnected) {
-      return () => {
-        isMounted = false;
-      };
-    }
-
-    // re-subscribe stored job on connect/reconnect
-    const storedJobId = localStorage.getItem(ACTIVE_JOB_STORAGE_KEY);
-    if (storedJobId && subscribeToJobs) {
-      subscribeToJobs([storedJobId]);
-    }
-
-    const handleJobStatusUpdate = (data) => {
-      if (!isMounted) return;
-
-      const { job_id, status, progress_percentage } = data;
-
-      console.log("🔔 [JobsPage] Received job status update:", data);
-
-      // normalize status to lowercase for consistency
-      const normalizedStatus = (status || "").toLowerCase();
-
-      // Map backend field (progress_percentage) to frontend field (progress)
-      // Handle null/undefined/0 correctly
-      const progress = progress_percentage !== null && progress_percentage !== undefined
-        ? progress_percentage
-        : 0;
-
-      const notificationItem = {
-        job_id,
-        status: normalizedStatus,
-        progress: progress
-      };
-
-      console.log("📤 [JobsPage] Dispatching notification update:", notificationItem);
-
-      // update job status in bulk first (updates jobs list)
-      dispatch(setJobStatusBulk([notificationItem]));
-
-      // dispatch update to notifications - reducer will handle merging and filtering completed jobs
-      dispatch(setJobNotifications([notificationItem]));
-
-      // persist latest active job status or clear if done
-      if (["done", "completed", "failed", "cancelled"].includes(normalizedStatus)) {
-        localStorage.removeItem(ACTIVE_JOB_STORAGE_KEY);
-      } else {
-        localStorage.setItem(ACTIVE_JOB_STORAGE_KEY, job_id);
-      }
-
-      console.log("✅ [JobsPage] Notification update dispatched");
-    };
-
-    socket.on("job_status_update", handleJobStatusUpdate);
-
-    // cleanup on unmount
-    return () => {
-      isMounted = false;
-      console.log("🧹 [JobsPage] Cleaning up socket listener");
-      socket.off("job_status_update", handleJobStatusUpdate);
-    };
-  }, [dispatch, socket, isConnected]);
-
+    return setupJobStatusSocketListener({
+      socket,
+      isConnected,
+      subscribeToJobs,
+      dispatch,
+      userId: DEFAULT_USER_ID,
+      storageKeysToResubscribe: [
+        getActiveJobStorageKey(DEFAULT_USER_ID),
+        getActiveEditorJobStorageKey(DEFAULT_USER_ID)
+      ]
+    });
+  }, [dispatch, socket, isConnected, subscribeToJobs]);
 
   const completedJobs = useMemo(
     () =>
@@ -258,7 +137,6 @@ const JobsPage = () => {
     if (completedJobs.length === 0) return;
 
     if (window.confirm(`Are you sure you want to delete all ${completedJobs.length} completed jobs?`)) {
-      // Delete all completed jobs sequentially
       for (const job of completedJobs) {
         const jobId = job.job_id || job.id;
         if (jobId) {
@@ -269,7 +147,7 @@ const JobsPage = () => {
   };
 
   const handleClearNotification = () => {
-    localStorage.removeItem(ACTIVE_JOB_STORAGE_KEY);
+    localStorage.removeItem(getActiveJobStorageKey(DEFAULT_USER_ID));
     dispatch(setJobNotifications([]));
   };
 
@@ -285,16 +163,6 @@ const JobsPage = () => {
         enableVoiceCloning: formPayload.enableVoiceCloning
       })
     );
-  };
-
-  // helper function to format status text
-  const formatStatusText = (status) => {
-    if (!status) return "Unknown";
-    // convert underscores to spaces and capitalize each word
-    return status
-      .split('_')
-      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-      .join(' ');
   };
 
   return (

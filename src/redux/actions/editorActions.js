@@ -37,6 +37,7 @@ export const loadEditorByVideoId = (videoId) => async (dispatch) => {
       type: EDITOR_LOAD_SUCCESS,
       payload: { ...data, videoId }
     });
+    // window.location.reload() // Removed for hot reload
   } catch (error) {
     dispatch({
       type: EDITOR_LOAD_FAILURE,

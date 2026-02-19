@@ -27,7 +27,7 @@ export const loadUserJobs = (userId) => async (dispatch) => {
 export const removeJob = (jobId, userId) => async (dispatch) => {
   dispatch({ type: JOB_DELETE_REQUEST, payload: jobId });
   try {
-    await deleteJob(jobId);
+    await deleteJob(jobId, userId);
     dispatch({ type: JOB_DELETE_SUCCESS, payload: jobId });
     // Reload jobs to ensure frontend is in sync with backend
     if (userId) {
@@ -72,7 +72,7 @@ export const initializeActiveJobFromJobs = (userId) => (dispatch, getState) => {
   const state = getState();
   const jobs = state.jobs.jobs || [];
   const storedJobId = localStorage.getItem(ACTIVE_JOB_STORAGE_KEY(userId));
-  
+
   if (!storedJobId) {
     return;
   }
@@ -85,7 +85,7 @@ export const initializeActiveJobFromJobs = (userId) => (dispatch, getState) => {
   const matchedJob = activeJobs.find(
     (job) => (job.job_id || job.id) === storedJobId
   );
-  
+
   if (matchedJob) {
     const status = (matchedJob?.status || matchedJob?.job_status || "queued").toLowerCase();
     const progress = matchedJob?.progress_percentage || 0;
@@ -104,22 +104,22 @@ export const handleNewJobSubmission = (jobId, userId, subscribeToJobs, isConnect
     status: "queued",
     progress: 0
   };
-  
+
   dispatch(setJobNotifications([newNotification]));
   localStorage.setItem(ACTIVE_JOB_STORAGE_KEY(userId), jobId);
-  
+
   if (isConnected && subscribeToJobs) {
     console.log("Subscribing to new job:", jobId);
     subscribeToJobs([jobId]);
   }
-  
+
   dispatch(loadUserJobs(userId));
 };
 
 export const syncActiveJobStorage = (userId) => (dispatch, getState) => {
   const state = getState();
   const notifications = state.jobs.notifications || [];
-  
+
   if (notifications.length === 0) {
     localStorage.removeItem(ACTIVE_JOB_STORAGE_KEY(userId));
     return;

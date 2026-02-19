@@ -911,6 +911,38 @@ a {
   max-width: 120px;
 }
 
+.volume-control--disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.volume-control--disabled .volume-control-label,
+.volume-control--disabled .volume-control-value {
+  color: var(--editor-text-muted);
+}
+
+/* Muted select text when redubbing */
+.select-muted .select-trigger {
+  color: var(--editor-text-muted);
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Spinning icon for redub button */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spin-icon {
+  animation: spin 1s linear infinite;
+}
+
 .volume-control-label {
   font-size: 11px;
   font-weight: 500;
@@ -1549,6 +1581,36 @@ a {
   cursor: pointer;
 }
 
+/* Chevron toggle for collapsible sections */
+.section-chevron-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--editor-border);
+  border-radius: 6px;
+  background: var(--editor-input-bg);
+  color: var(--editor-text-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.section-chevron-toggle:hover {
+  background: var(--editor-accent-bg);
+  color: var(--editor-accent);
+  border-color: var(--editor-accent);
+}
+
+/* When speaker-toggle doubles as a chevron, override size */
+.speaker-toggle.section-chevron-toggle {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+}
+
 .speaker-segments {
   margin-top: 10px;
   display: grid;
@@ -2009,6 +2071,23 @@ a {
 .timeline-row-wrapper.active-segment .timeline-row {
   border: 2px solid var(--editor-accent);
   box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.2);
+}
+
+/* Mute all segment colors when an editor action is running */
+.timeline-row-wrapper.editing-muted {
+  opacity: 0.45;
+  filter: grayscale(30%);
+  pointer-events: none;
+  transition: opacity 0.25s ease, filter 0.25s ease;
+}
+
+.timeline-row-wrapper.editing-muted .timeline-row {
+  border-color: var(--editor-border);
+  box-shadow: none;
+}
+
+.timeline-row-wrapper.editing-muted .segment-number {
+  color: var(--editor-text-muted);
 }
 
 .segment-number {
@@ -2526,11 +2605,13 @@ a {
     transform: translateY(18px) scale(0.7);
     filter: blur(4px);
   }
+
   60% {
     opacity: 1;
     transform: translateY(-4px) scale(1.05);
     filter: blur(0px);
   }
+
   100% {
     opacity: 1;
     transform: translateY(0) scale(1);
@@ -2539,9 +2620,12 @@ a {
 }
 
 @keyframes letterFloat {
-  0%, 100% {
+
+  0%,
+  100% {
     transform: translateY(0);
   }
+
   50% {
     transform: translateY(-6px);
   }

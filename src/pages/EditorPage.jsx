@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { useParams } from "react-router-dom";
-import { FiList, FiUpload, FiLayers, FiSun, FiMoon, FiRefreshCw } from "react-icons/fi";
+import { FiList, FiUpload, FiLayers, FiSun, FiMoon, FiRefreshCw, FiChevronDown, FiChevronUp, FiVolumeX, FiCheck, FiX } from "react-icons/fi";
 import {
   loadEditorByJobId,
   loadEditorByVideoId,
@@ -13,6 +13,8 @@ import {
   deleteSegmentAction
 } from "../redux/actions/editorActions.js";
 import { EDITOR_BUSY, EDITOR_IDLE } from "../redux/constants/editorConstants.js";
+import { updateEditorNotification, resetEditorNotification } from "../redux/actions/editorNotificationActions.js";
+import EditorNotifications from "../components/EditorNotifications.jsx";
 import { useSocket } from "../Socket/index.jsx";
 import ErrorBanner from "../components/ErrorBanner.jsx";
 import EditorView from "../components/EditorView.jsx";
@@ -30,8 +32,10 @@ import {
 import {
   downloadJobVideoUrl,
   downloadOriginalVideoUrl,
-  downloadDubbedAudioUrl
+  downloadDubbedAudioUrl,
+  fetchJobStatus
 } from "../api/jobsApi.js";
+import { formatStatusText } from "../utils/formatStatusText.js";
 import {
   fetchSpeakers,
   redubSegment,
@@ -42,12 +46,26 @@ import {
   cutDubbedAudio,
   normalizeDubbedAudio,
   updateVideoGains,
-  remixDubbedAudio
+  remixDubbedAudio,
+  silenceVideoRange,
+  manualMoveRedubSegment,
+  manualStretchRedubSegment
 } from "../api/editorApi.js";
 import Select from "../components/Select.jsx";
 import ConfirmSelection from "../components/ConfirmSelection.jsx";
 import LoadingScreenContainer from "../components/LoadingScreenContainer.jsx";
 import DubbingTimeline from "../components/DubbingTimeline.jsx";
+import {
+  getActiveJobStorageKey,
+  getActiveEditorJobStorageKey,
+  DEFAULT_USER_ID
+} from "../helpers/storageKeys.js";
+import {
+  subscribeAndPersistEditorJob,
+  hydrateFromStoredJob,
+  setupJobStatusSocketListener
+} from "../helpers/jobSubscriptionHelpers.js";
+import { STATUS_LABELS } from "../utils/statusLabels.js";
 
 const EDITOR_SECTIONS = [
   { id: "timeline", label: "Editor Timeline", icon: FiList },
@@ -61,6 +79,7 @@ const EditorPage = () => {
   const { theme, toggleTheme } = useTheme();
   const { socket, isConnected, subscribeToJobs } = useSocket() || {};
   const videoRef = useRef(null);
+  const timelineRef = useRef(null);
   const waveSurferRef = useRef(null);
   const syncRef = useRef({
     syncingFromWave: false,
@@ -77,7 +96,8 @@ const EditorPage = () => {
     redubbing,
     jobId,
     targetLanguage,
-    isEditing
+    isEditing,
+    editingStatusText
   } = useSelector((state) => state.editor);
 
   const [editorSection, setEditorSection] = useState("timeline");
@@ -101,7 +121,6 @@ const EditorPage = () => {
   const [resizingLR, setResizingLR] = useState(false);
   const [resizingAudio, setResizingAudio] = useState(false);
   const [remixing, setRemixing] = useState(false);
-  const [editingStatusText, setEditingStatusText] = useState(null);
   const resizeStartRef = useRef({ x: 0, leftPercent: 50 });
   const audioResizeStartRef = useRef({ y: 0, height: 280 });
   const layoutRef = useRef(null);
@@ -213,27 +232,7 @@ const EditorPage = () => {
     loadCloneStatus();
   }, [video?.id]);
 
-  // Listen for real-time job status updates (e.g. during "Redub entire video")
-  useEffect(() => {
-    if (!socket || !jobId) return;
-
-    const handleJobStatus = (data) => {
-      if (data?.job_id !== jobId) return;
-      const status = (data.status || "").toLowerCase();
-      setEditingStatusText(status);
-
-      // Auto-dismiss loading on terminal states
-      if (["done", "completed", "failed", "cancelled"].includes(status)) {
-        setTimeout(() => {
-          setEditingStatusText(null);
-          dispatch({ type: EDITOR_IDLE });
-        }, 1500);
-      }
-    };
-
-    socket.on("job_status_update", handleJobStatus);
-    return () => socket.off("job_status_update", handleJobStatus);
-  }, [socket, jobId, dispatch]);
+  // NOTE: socket listener for job_status_update is now inside <EditorNotifications />
 
   const formatDuration = (ms) => {
     if (ms === null || ms === undefined) {
@@ -473,6 +472,73 @@ const EditorPage = () => {
     }
   }, [dispatch, params.jobId]);
 
+  // Persist active editor job to localStorage and subscribe on connect/reload
+  useEffect(() => {
+    const jobId = params.jobId || localStorage.getItem(getActiveEditorJobStorageKey(DEFAULT_USER_ID));
+    if (!jobId) return;
+
+    subscribeAndPersistEditorJob({
+      jobId,
+      userId: DEFAULT_USER_ID,
+      subscribeToJobs,
+      isConnected
+    });
+  }, [params.jobId, subscribeToJobs, isConnected]);
+
+  // Hydrate job status from API on mount/reload (persists across reload)
+  useEffect(() => {
+    const jobId = params.jobId || localStorage.getItem(getActiveEditorJobStorageKey(DEFAULT_USER_ID));
+    if (!jobId) return;
+
+    hydrateFromStoredJob(jobId, dispatch, {
+      fetchJobStatus,
+      userId: DEFAULT_USER_ID
+    });
+  }, [dispatch, params.jobId]);
+
+  // Fetch job status and pass to EDITOR_BUSY when job is processing
+  useEffect(() => {
+    const resolvedJobId = jobId || params.jobId || localStorage.getItem(getActiveEditorJobStorageKey(DEFAULT_USER_ID));
+    if (!resolvedJobId) return;
+
+    const fetchStatus = async () => {
+      try {
+        const statusData = await fetchJobStatus(resolvedJobId);
+        const status = statusData?.status || "unknown";
+        const statusLower = status.toLowerCase();
+        const processingStatuses = [
+          "queued", "processing", "extracting_audio", "analyzing_audio_stems",
+          "analyzing_audio", "transcribing_audio", "translating_audio",
+          "generating_tts", "adjusting_audio_timing", "creating_final_audio",
+          "cleaning_things_up", "cloning", "lip_syncing"
+        ];
+        if (processingStatuses.includes(statusLower)) {
+          const formattedStatus = formatStatusText(status);
+          dispatch({ type: EDITOR_BUSY, payload: { statusText: formattedStatus } });
+        }
+      } catch (err) {
+        console.error("Failed to fetch job status:", err);
+      }
+    };
+
+    fetchStatus();
+  }, [jobId, params.jobId, dispatch]);
+
+  // Socket listener + re-subscribe to active/editor jobs when on EditorPage
+  useEffect(() => {
+    return setupJobStatusSocketListener({
+      socket,
+      isConnected,
+      subscribeToJobs,
+      dispatch,
+      userId: DEFAULT_USER_ID,
+      storageKeysToResubscribe: [
+        getActiveJobStorageKey(DEFAULT_USER_ID),
+        getActiveEditorJobStorageKey(DEFAULT_USER_ID)
+      ]
+    });
+  }, [dispatch, socket, isConnected, subscribeToJobs]);
+
   useEffect(() => {
     if (video?.target_language) {
       dispatch(setTargetLanguage(video.target_language));
@@ -541,24 +607,25 @@ const EditorPage = () => {
 
   const handleSegmentTimingChange = useCallback(async (segmentId, changes) => {
     if (!segmentId) return;
-    dispatch({ type: EDITOR_BUSY });
+    dispatch({ type: EDITOR_BUSY, payload: { statusText: formatStatusText('updating_segment') } });
     try {
       await dispatch(saveSegmentUpdate(segmentId, changes));
+      console.log(changes)
 
       if ((changes.is_manual_stretch || changes.is_manual_move) && video?.id) {
-        // Auto-redub and remix on manual timing changes
-        // "Stretch" changes duration -> needs TTS regen
-        // "Move" changes context -> might benefit from TTS regen
-        // Both require remixing the full audio track to hear the change
         try {
-          await redubSegment(segmentId, {});
-          await remixDubbedAudio(video.id);
+          if (changes.is_manual_move) {
+            await manualMoveRedubSegment(segmentId, changes)
+          } else {
+            await manualStretchRedubSegment(segmentId, changes)
+          }
+          // await remixDubbedAudio(video.id);
           setAudioCacheBuster((p) => p + 1);
         } catch (redubErr) {
           console.warn("Auto-redub/remix after manual change failed:", redubErr);
         }
         // Reload to sync ripple effects and ensure frontend state matches backend
-        await dispatch(loadEditorByVideoId(video.id));
+        //await dispatch(loadEditorByVideoId(video.id));
       }
     } catch (e) {
       showAlert(`Failed to update segment timing: ${e?.message || e}`, "Error");
@@ -584,8 +651,8 @@ const EditorPage = () => {
     await dispatch(saveSegmentUpdate(segmentId, payload));
   };
 
-  const handleRedub = async (segment) => {
-    dispatch({ type: EDITOR_BUSY });
+  const handleSegmentRedub = async (segment) => {
+    dispatch({ type: EDITOR_BUSY, payload: { statusText: formatStatusText(STATUS_LABELS.redubbing_segment) } });
     try {
       await redubSegment(segment.id, {
         target_text: segment.target_text,
@@ -608,17 +675,26 @@ const EditorPage = () => {
     title: "",
     message: "",
     isAlert: false,
-    confirmText: "OK"
+    confirmText: "OK",
+    variant: "info"
   });
 
-  const showAlert = (message, title = "Notification", isError = false) => {
+  const showAlert = (message, title = "Notification", type = "info") => {
+    let finalVariant = type;
+    // Auto-detect common variants from title if default 'info' passed
+    if (finalVariant === "info") {
+      const lowerTitle = (title || "").toLowerCase();
+      if (lowerTitle.includes("error") || lowerTitle.includes("fail")) finalVariant = "error";
+      else if (lowerTitle.includes("success")) finalVariant = "success";
+    }
+
     setAlertModal({
       isOpen: true,
       title,
       message,
-      isAlert: true,
+      isAlert: true, // Preserved but overridden by explicit variant
       confirmText: "OK",
-      isError // optional flag if we want to style differently later
+      variant: finalVariant
     });
   };
 
@@ -629,7 +705,7 @@ const EditorPage = () => {
   const confirmDelete = async (mode) => {
     if (!deleteModal.segmentId) return;
     setDeleteModal({ isOpen: false, segmentId: null });
-    dispatch({ type: EDITOR_BUSY });
+    dispatch({ type: EDITOR_BUSY, payload: { statusText: formatStatusText('deleting_segment') } });
     try {
       await dispatch(deleteSegmentAction(deleteModal.segmentId, mode, video.id));
     } finally {
@@ -640,7 +716,7 @@ const EditorPage = () => {
   const handleCloneVoice = async (speakerLabel) => {
     if (!video?.id) return;
     setCloningSpeaker(speakerLabel);
-    dispatch({ type: EDITOR_BUSY });
+    dispatch({ type: EDITOR_BUSY, payload: { statusText: formatStatusText('cloning_voice') } });
     try {
       await cloneSpeakerVoice(video.id, speakerLabel);
       const res = await fetchCloneStatus(video.id);
@@ -674,7 +750,7 @@ const EditorPage = () => {
 
   const handleSetSpeakerVoiceProfile = async (speakerLabel, voiceProfile) => {
     if (!video?.id || !voiceProfile) return;
-    dispatch({ type: EDITOR_BUSY });
+    dispatch({ type: EDITOR_BUSY, payload: { statusText: formatStatusText('setting_voice_profile') } });
     try {
       await setSpeakerVoiceProfile(video.id, speakerLabel, voiceProfile);
       dispatch(loadEditorByVideoId(video.id));
@@ -723,7 +799,7 @@ const EditorPage = () => {
   const runAudioOp = useCallback(async (opName, fn) => {
     if (!video?.id) return;
     setAudioOpInProgress(true);
-    dispatch({ type: EDITOR_BUSY });
+    dispatch({ type: EDITOR_BUSY, payload: { statusText: formatStatusText(opName.toLowerCase().replace(/\s+/g, '_')) } });
     try {
       await fn();
       setAudioCacheBuster((b) => b + 1);
@@ -764,6 +840,21 @@ const EditorPage = () => {
     runAudioOp("Normalize all", () => normalizeDubbedAudio(video.id, {}));
   }, [video?.id, runAudioOp]);
 
+  const handleSilenceSelection = useCallback(() => {
+    try {
+      dispatch({ type: EDITOR_BUSY, payload: { statusText: formatStatusText('silence_range') } })
+      if (!waveformSelection) return;
+      runAudioOp("Silence Range", async () => {
+        await silenceVideoRange(video.id, waveformSelection.startMs, waveformSelection.endMs);
+      });
+    } catch (e) {
+      showAlert(`${opName} failed: ${e?.response?.data?.detail ?? e?.message ?? e}`, "Error");
+    } finally {
+      setAudioOpInProgress(false);
+      dispatch({ type: EDITOR_IDLE });
+    }
+  }, [video?.id, waveformSelection, runAudioOp]);
+
   const [localDialogueGain, setLocalDialogueGain] = useState(0.5);
   const [localBackgroundGain, setLocalBackgroundGain] = useState(0.25);
   useEffect(() => {
@@ -798,7 +889,7 @@ const EditorPage = () => {
   const handleRemix = useCallback(async () => {
     if (!video?.id) return;
     setRemixing(true);
-    dispatch({ type: EDITOR_BUSY });
+    dispatch({ type: EDITOR_BUSY, payload: { statusText: formatStatusText('remixing_audio') } });
     try {
       await remixDubbedAudio(video.id);
       setAudioCacheBuster((prev) => prev + 1);
@@ -819,6 +910,12 @@ const EditorPage = () => {
   const handleSegmentBackgroundGainChange = useCallback(
     (segmentId, value) => {
       dispatch(saveSegmentUpdate(segmentId, { background_gain: value }));
+    },
+    [dispatch]
+  );
+  const handleSegmentSpeechSpeedChange = useCallback(
+    (segmentId, value) => {
+      dispatch(saveSegmentUpdate(segmentId, { speech_speed: value }));
     },
     [dispatch]
   );
@@ -861,13 +958,26 @@ const EditorPage = () => {
     };
   }, []);
 
+  // Hot reload state (timestamp) to force media refresh without page reload
+  const [mediaKey, setMediaKey] = useState(Date.now());
+
+  const handleHotReload = useCallback(() => {
+    if (video?.id) {
+      // 1. Reload editor data (segments, transcript)
+      dispatch(loadEditorByVideoId(video.id));
+      // 2. Update media key to force video/audio tag reload
+      setMediaKey(Date.now());
+    }
+  }, [dispatch, video?.id]);
+
   const resolvedJobId = jobId || params.jobId || jobIdInput;
-  const videoUrl = resolvedJobId ? downloadJobVideoUrl(resolvedJobId) : null;
+  // Append timestamp to bust cache on hot reload
+  const videoUrl = resolvedJobId ? `${downloadJobVideoUrl(resolvedJobId)}?t=${mediaKey}` : null;
   const originalUrl = resolvedJobId
     ? downloadOriginalVideoUrl(resolvedJobId)
     : null;
   const dubbedAudioUrl = resolvedJobId
-    ? downloadDubbedAudioUrl(resolvedJobId)
+    ? `${downloadDubbedAudioUrl(resolvedJobId)}?t=${mediaKey}`
     : null;
 
   const totalDurationMs = video?.duration_ms || 1;
@@ -876,16 +986,23 @@ const EditorPage = () => {
     <div className="editor-page-wrap">
       <header className="editor-top-bar">
         <span className="editor-top-bar-title">Reedapt Editor</span>
-        <button
-          type="button"
-          className="editor-theme-toggle"
-          onClick={toggleTheme}
-          title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-          aria-label="Toggle theme"
-        >
-          {theme === "dark" ? <FiSun size={16} /> : <FiMoon size={16} />}
-          <span className="editor-theme-label">{theme === "dark" ? "Light" : "Dark"}</span>
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <EditorNotifications
+            jobId={resolvedJobId}
+            userId={DEFAULT_USER_ID}
+            onReload={handleHotReload}
+          />
+          <button
+            type="button"
+            className="editor-theme-toggle"
+            onClick={toggleTheme}
+            title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            aria-label="Toggle theme"
+          >
+            {theme === "dark" ? <FiSun size={16} /> : <FiMoon size={16} />}
+            <span className="editor-theme-label">{theme === "dark" ? "Light" : "Dark"}</span>
+          </button>
+        </div>
       </header>
 
       <div className="editor-layout" ref={layoutRef} style={{ display: "flex" }}>
@@ -911,38 +1028,38 @@ const EditorPage = () => {
                   label: `${LANGUAGE_FLAGS[code] || "🏳️"} ${label}`
                 }))}
                 placeholder="Select language"
-                disabled={changingLanguage || redubbing}
+                disabled={changingLanguage || redubbing || isEditing}
                 className="language-select-wrapper"
               />
             </div>
             <div className="editor-top-controls-redub">
               <button
                 type="button"
-                className="button secondary small redub-button"
+                className={`button secondary small redub-button ${!video?.id || applying || changingLanguage || redubbing || isEditing ? 'muted' : ''}`}
                 onClick={async () => {
-                  if (!video?.id) return;
-                  dispatch({ type: EDITOR_BUSY });
-                  setEditingStatusText("processing");
                   try {
-                    // Subscribe to job socket room for real-time status
-                    if (jobId && isConnected && subscribeToJobs) {
-                      subscribeToJobs([jobId]);
+                    if (!video?.id) return;
+                    // Ensure socket subscription is active before triggering redub
+                    const resolvedJobId = jobId || params.jobId
+                      || localStorage.getItem(getActiveEditorJobStorageKey(DEFAULT_USER_ID));
+                    if (resolvedJobId && isConnected && subscribeToJobs) {
+                      subscribeToJobs([resolvedJobId]);
                     }
+                    // Lock all editor actions while redub runs
+                    dispatch({ type: EDITOR_BUSY, payload: { statusText: formatStatusText('redubbing_video') } });
+                    // Show initial loading state — socket events will update in real-time
+                    dispatch(updateEditorNotification(STATUS_LABELS.redubbing_video, null, resolvedJobId));
                     await dispatch(redubVideoAction(video.id));
-                    setEditingStatusText("done");
-                    showAlert("Redub job done! The video has been regenerated with current transcript data.", "Success");
-                    setTimeout(() => window.location.reload(), 2000);
                   } catch (_) {
-                    setEditingStatusText(null);
-                  } finally {
                     dispatch({ type: EDITOR_IDLE });
+                    dispatch(resetEditorNotification());
                   }
                 }}
-                disabled={!video?.id || applying || changingLanguage || redubbing}
+                disabled={!video?.id || applying || changingLanguage || redubbing || isEditing}
                 title="Redub video with current transcript"
               >
-                <FiRefreshCw size={12} />
-                <span>Redub entire video</span>
+                <FiRefreshCw size={12} className={isEditing && editingStatusText?.toLowerCase().includes('redub') ? 'spin-icon' : ''} />
+                <span>{isEditing && editingStatusText?.toLowerCase().includes('redub') ? 'Redubbing...' : 'Redub entire video'}</span>
               </button>
             </div>
           </div>
@@ -973,7 +1090,7 @@ const EditorPage = () => {
                 onReassignSpeaker={handleReassignSpeaker}
                 checkSegmentMismatch={checkSegmentMismatch}
                 onApplyChanges={async (changes) => {
-                  dispatch({ type: EDITOR_BUSY });
+                  dispatch({ type: EDITOR_BUSY, payload: { statusText: formatStatusText('applying_changes') } });
                   try {
                     await dispatch(applyChanges(video.id, changes));
                     window.location.reload();
@@ -984,6 +1101,7 @@ const EditorPage = () => {
                 applying={applying}
                 changingLanguage={changingLanguage}
                 redubbing={redubbing}
+                isEditing={isEditing}
                 targetLanguage={targetLanguage}
                 supportedLanguages={SUPPORTED_LANGUAGES}
                 onChangeLanguage={handleLanguageChange}
@@ -992,25 +1110,9 @@ const EditorPage = () => {
                 onUpdateSegmentMeta={handleUpdateMeta}
                 onSegmentVocalGainChange={handleSegmentVocalGainChange}
                 onSegmentBackgroundGainChange={handleSegmentBackgroundGainChange}
+                onSegmentSpeechSpeedChange={handleSegmentSpeechSpeedChange}
                 onDeleteSegment={handleDeleteSegment}
-                onRedub={async (videoId) => {
-                  dispatch({ type: EDITOR_BUSY });
-                  setEditingStatusText("processing");
-                  try {
-                    if (jobId && isConnected && subscribeToJobs) {
-                      subscribeToJobs([jobId]);
-                    }
-                    await dispatch(redubVideoAction(videoId));
-                    setEditingStatusText("done");
-                    showAlert("Redub job done. The video has been regenerated with current transcript data.", "Success");
-                    setTimeout(() => window.location.reload(), 2000);
-                  } catch (error) {
-                    setEditingStatusText(null);
-                  } finally {
-                    dispatch({ type: EDITOR_IDLE });
-                  }
-                }}
-                onBusy={() => dispatch({ type: EDITOR_BUSY })}
+                onBusy={() => dispatch({ type: EDITOR_BUSY, payload: { statusText: formatStatusText('processing') } })}
                 onIdle={() => dispatch({ type: EDITOR_IDLE })}
               />
             )}
@@ -1056,10 +1158,11 @@ const EditorPage = () => {
               <h3 className="card-title">Original vs Dubbed</h3>
               <button
                 type="button"
-                className="button secondary button-sm"
+                className="section-chevron-toggle"
                 onClick={() => setShowVideos((prev) => !prev)}
+                title={showVideos ? "Collapse" : "Expand"}
               >
-                {showVideos ? "Hide" : "Show"}
+                {showVideos ? <FiChevronUp size={18} /> : <FiChevronDown size={18} />}
               </button>
             </div>
             {showVideos ? (
@@ -1091,19 +1194,16 @@ const EditorPage = () => {
                   </div>
                 ) : null}
               </>
-            ) : (
-              <div className="video-hidden-note">
-                Videos are hidden. Click “Show videos” to preview again.
-              </div>
-            )}
+            ) : null}
             <div className="speaker-control">
               <div className="speaker-control-header">
                 <h4>Speakers & Segments</h4>
                 <button
-                  className="button secondary"
+                  className="section-chevron-toggle"
                   onClick={() => setShowSpeakersSegments((prev) => !prev)}
+                  title={showSpeakersSegments ? "Collapse" : "Expand"}
                 >
-                  {showSpeakersSegments ? "Hide" : "Show"}
+                  {showSpeakersSegments ? <FiChevronUp size={18} /> : <FiChevronDown size={18} />}
                 </button>
               </div>
               {showSpeakersSegments ? (
@@ -1162,22 +1262,23 @@ const EditorPage = () => {
                                 <span className="badge badge-muted">Voice similarity ({Math.round(sp.durationSec)}s)</span>
                               ) : null}
                               <button
-                                className="speaker-toggle"
+                                className="speaker-toggle section-chevron-toggle"
                                 onClick={() =>
                                   setExpandedSpeakers((prev) => ({
                                     ...prev,
                                     [sp.label]: !isExpanded
                                   }))
                                 }
+                                title={isExpanded ? "Collapse segments" : "Expand segments"}
                               >
-                                {isExpanded ? "Hide segments" : "Show segments"}
+                                {isExpanded ? <FiChevronUp size={14} /> : <FiChevronDown size={14} />}
                               </button>
                             </div>
                             {(sp.canBeCloned && !sp.cloned) ? (
                               <div className="speaker-clone-actions">
                                 <button
                                   className="button primary"
-                                  disabled={cloningSpeaker === sp.label}
+                                  disabled={cloningSpeaker === sp.label || isEditing}
                                   onClick={() => handleCloneVoice(sp.label)}
                                 >
                                   {cloningSpeaker === sp.label ? "Cloning..." : "Clone voice"}
@@ -1278,7 +1379,7 @@ const EditorPage = () => {
                                             className="meta-select-group"
                                           />
                                         </label>
-                                        <button className="secondary" onClick={() => handleRedub(seg)}>
+                                        <button className="secondary" onClick={() => handleSegmentRedub(seg)} disabled={isEditing}>
                                           Redub
                                         </button>
                                       </div>
@@ -1308,7 +1409,6 @@ const EditorPage = () => {
       />
       <div className="audio-panel-full" style={{ height: audioPanelHeight, minHeight: 140 }}>
         <div className="card audio-panel">
-          <h3 className="card-title">Dubbed Audio</h3>
           {dubbedAudioUrl ? (
             <>
               {/* Controls Toolbar (Keep functional buttons, remove labels/dividers if requested, or keep minimal) 
@@ -1318,12 +1418,46 @@ const EditorPage = () => {
               {/* Controls Toolbar removed as per user request */}
 
               <DubbingTimeline
+                ref={timelineRef}
                 audioUrl={dubbedAudioUrl + (audioCacheBuster ? `?t=${audioCacheBuster}` : "")}
                 speakers={speakerControlData} /* Passing full speaker control data which has label, displayLabel etc */
                 onWaveReady={handleWaveReady}
                 onSelectionChange={handleWaveformSelection}
                 onSegmentUpdate={handleSegmentTimingChange}
+                isEditing={isEditing}
               />
+
+              {waveformSelection && (
+                <div className="audio-tools-bar" style={{ display: 'flex', justifyContent: 'center', padding: '10px 0', gap: '10px' }}>
+                  <div className="selection-info" style={{ display: 'flex', alignItems: 'center', gap: '10px', background: 'var(--bg-secondary)', padding: '5px 15px', borderRadius: '20px', border: '1px solid var(--border-color)' }}>
+                    <span className="selection-label" style={{ fontSize: '0.9em', color: 'var(--text-secondary)' }}>
+                      Silence Range: {formatMsShort(waveformSelection.startMs)} - {formatMsShort(waveformSelection.endMs)}
+                    </span>
+                    <div style={{ display: 'flex', gap: '5px' }}>
+                      <button
+                        className="button danger small"
+                        onClick={handleSilenceSelection}
+                        title="Confirm Silence"
+                        disabled={isEditing}
+                        style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 10px' }}
+                      >
+                        <FiCheck size={14} /> Confirm
+                      </button>
+                      <button
+                        className="button secondary small"
+                        onClick={() => {
+                          setWaveformSelection(null);
+                          if (timelineRef.current) timelineRef.current.clearRegions();
+                        }}
+                        title="Cancel Silence"
+                        style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 10px' }}
+                      >
+                        <FiX size={14} /> Cancel
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <AudioControls
                 isPlaying={isAudioPlaying}
@@ -1365,10 +1499,11 @@ const EditorPage = () => {
         confirmText={alertModal.confirmText}
         cancelText={null} // Hide cancel button for alerts
         isAlert={alertModal.isAlert}
+        variant={alertModal.variant} // Pass variant explicitly
         theme={theme}
         onConfirm={() => setAlertModal({ ...alertModal, isOpen: false })}
       />
-      <LoadingScreenContainer loading={isEditing} statusText={editingStatusText} />
+      <LoadingScreenContainer loading={loading} statusText={editingStatusText} />
     </div>
   );
 };

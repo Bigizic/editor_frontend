@@ -17,8 +17,10 @@ export const downloadDubbedAudioUrl = (jobId) => {
   return `${apiClient.defaults.baseURL}/jobs/${jobId}/dubbed-audio`;
 };
 
-export const deleteJob = async (jobId) => {
-  const response = await apiClient.delete(`/jobs/${jobId}`);
+export const deleteJob = async (jobId, userId) => {
+  const response = await apiClient.delete(`/jobs/${jobId}`, {
+    params: { user_id: userId }
+  });
   return response.data;
 };
 

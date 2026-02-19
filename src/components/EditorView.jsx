@@ -24,14 +24,15 @@ const EditorView = ({
   onChangeLanguage,
   onPlaySegment,
   currentPlaybackTime = 0,
-  onRedub,
   onUpdateSegmentMeta,
   onSegmentVocalGainChange,
   onSegmentBackgroundGainChange,
+  onSegmentSpeechSpeedChange,
   onDeleteSegment,
   onAlert,
   onBusy,
-  onIdle
+  onIdle,
+  isEditing
 }) => {
   const LANGUAGE_LABELS = supportedLanguages || {};
   const LANGUAGE_FLAGS = {
@@ -293,7 +294,6 @@ const EditorView = ({
   const handleRetranslate = async (segment, direction) => {
     try {
       setRetranslatingId(segment.id);
-      if (onBusy) onBusy();
 
       let payload = {
         direction,
@@ -322,7 +322,6 @@ const EditorView = ({
       if (onAlert) onAlert(`Translation failed: ${e.message}`, "Error");
     } finally {
       setRetranslatingId(null);
-      if (onIdle) onIdle();
     }
   };
 
@@ -377,7 +376,11 @@ const EditorView = ({
     const change = {
       segment_id: segmentId,
       source_text: direction === "target_to_source" ? text : (currentEdit.source_text || segment.source_text),
-      target_text: direction === "source_to_target" ? text : (currentEdit.target_text || segment.target_text)
+      target_text: direction === "source_to_target" ? text : (currentEdit.target_text || segment.target_text),
+      speaker_label: currentEdit.speaker_label,
+      gender: currentEdit.gender,
+      voice_type: currentEdit.voice_type,
+      voice_profile: currentEdit.voice_profile
     };
     onApplyChanges([change]);
   };
@@ -393,7 +396,6 @@ const EditorView = ({
   const handleRedubSegment = async (segment) => {
     try {
       setRedubbingId(segment.id);
-      if (onBusy) onBusy();
       const current = edits[segment.id];
       await redubSegment(segment.id, {
         target_text: current?.target_text ?? segment.target_text,
@@ -407,7 +409,6 @@ const EditorView = ({
       if (onAlert) onAlert(`Failed to redub segment: ${error.message}`, "Error");
     } finally {
       setRedubbingId(null);
-      if (onIdle) onIdle();
     }
   };
 
@@ -432,13 +433,16 @@ const EditorView = ({
           const isSTPending = pendingRetrans?.direction === "source_to_target";
           const isTSPending = pendingRetrans?.direction === "target_to_source";
 
+          // Per-segment busy: only locks THIS segment's buttons
+          const isSegmentBusy = retranslatingId === segment.id || redubbingId === segment.id;
+
           return (
             <div
               key={segment.id}
               ref={(el) => {
                 if (el && segment.id) segmentRefs.current[segment.id] = el;
               }}
-              className={`timeline-row-wrapper ${isActive ? 'active-segment' : ''}`}
+              className={`timeline-row-wrapper ${isActive ? 'active-segment' : ''} ${isEditing ? 'editing-muted' : ''}`}
             >
               <div className="segment-number">{index + 1}</div>
               <div className={`timeline-row ${isActive ? 'active-segment' : ''}`}>
@@ -457,7 +461,8 @@ const EditorView = ({
                             speakerSelect={true}
                             existingSpeakerLabels={speakerLabels.filter((l) => l !== "Unassigned")}
                             customOptionLabel="Custom speaker..."
-                            className="meta-select"
+                            className={`meta-select ${redubbing ? 'select-muted' : ''}`}
+                            disabled={redubbing}
                           />
                         </div>
                       ) : null}
@@ -474,7 +479,8 @@ const EditorView = ({
                             { value: "unknown", label: "Unknown" }
                           ]}
                           placeholder="Auto"
-                          className="meta-select"
+                          className={`meta-select ${redubbing ? 'select-muted' : ''}`}
+                          disabled={redubbing}
                         />
                       </div>
                       <div className="meta-select-group compact">
@@ -484,7 +490,8 @@ const EditorView = ({
                           onChange={(val) => handleMetaChange(segment.id, "voice_type", val)}
                           options={voiceTypesList}
                           placeholder="Pick"
-                          className="meta-select"
+                          className={`meta-select ${redubbing ? 'select-muted' : ''}`}
+                          disabled={redubbing}
                         />
                       </div>
                       <div className="meta-select-group compact second">
@@ -496,7 +503,8 @@ const EditorView = ({
                           placeholder="Select"
                           canEdit={true}
                           customOptionLabel="Custom profile..."
-                          className="meta-select"
+                          className={`meta-select ${redubbing ? 'select-muted' : ''}`}
+                          disabled={redubbing}
                         />
                         <span className="meta-hint">
                           {effectiveGender
@@ -517,6 +525,7 @@ const EditorView = ({
                                 step={0.05}
                                 compact
                                 title="Per-segment vocal volume (Apply volume in audio panel to hear)"
+                                disabled={redubbing}
                               />
                             </div>
                           ) : null}
@@ -531,6 +540,22 @@ const EditorView = ({
                                 step={0.05}
                                 compact
                                 title="Per-segment background volume (Apply volume in audio panel to hear)"
+                                disabled={redubbing}
+                              />
+                            </div>
+                          ) : null}
+                          {onSegmentSpeechSpeedChange ? (
+                            <div className="meta-select-group compact vocal-gain-group">
+                              <VolumeControl
+                                label="Speed"
+                                value={segment.speech_speed ?? 1}
+                                onChange={(v) => onSegmentSpeechSpeedChange(segment.id, v)}
+                                min={0.5}
+                                max={2.0}
+                                step={0.05}
+                                compact
+                                title="TTS Speaking Rate (Regenerate to apply)"
+                                disabled={redubbing}
                               />
                             </div>
                           ) : null}
@@ -559,6 +584,7 @@ const EditorView = ({
                           onDeleteSegment(segment.id);
                         }}
                         title="Delete segment"
+                        disabled={isEditing || isSegmentBusy}
                         style={{ marginLeft: 8 }}
                       >
                         <FiTrash />
@@ -600,7 +626,7 @@ const EditorView = ({
                       <button
                         className={`button secondary small ${retranslatingId === segment.id || (edits[segment.id]?.source_text ?? segment.source_text ?? '') === (segment.source_text ?? '') ? 'muted' : ''}`}
                         onClick={() => handleRetranslate(segment, "source_to_target")}
-                        disabled={retranslatingId === segment.id || changingLanguage || redubbing || redubbingId === segment.id}
+                        disabled={isEditing || isSegmentBusy}
                         title="Translate Source → Target"
                       >
                         {retranslatingId === segment.id && !isTSPending ? 'Translating...' : 'Translate ➔'}
@@ -608,7 +634,7 @@ const EditorView = ({
                       {/* Show Accept/Cancel here if T->S preview is active */}
                       {isTSPending ? (
                         <div className="confirm-row">
-                          <button className="button primary" onClick={() => acceptRetranslation(segment.id)}>
+                          <button className="button primary" onClick={() => acceptRetranslation(segment.id)} disabled={isEditing || isSegmentBusy}>
                             <FiCheck />
                           </button>
                           <button className="button secondary" onClick={() => discardRetranslation(segment.id)}>
@@ -629,7 +655,7 @@ const EditorView = ({
                         event.target.style.height = 'auto';
                         event.target.style.height = event.target.scrollHeight + 'px';
                       }}
-                      disabled={applying || changingLanguage || redubbing}
+                      disabled={isEditing || isSegmentBusy}
                       rows={1}
                     />
                     {isTSPending ? (
@@ -650,9 +676,9 @@ const EditorView = ({
                       {/* Action buttons row */}
                       <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
                         <button
-                          className="button secondary small"
+                          className={`button secondary small ${retranslatingId === segment.id || (edits[segment.id]?.target_text ?? segment.target_text ?? '') === (segment.target_text ?? '') ? 'muted' : ''}`}
                           onClick={() => handleRetranslate(segment, "target_to_source")}
-                          disabled={retranslatingId === segment.id || changingLanguage || redubbing || redubbingId === segment.id}
+                          disabled={isEditing || isSegmentBusy}
                           title="Translate Target → Source (Reverse)"
                         >
                           {retranslatingId === segment.id && !isSTPending ? '...' : '⬅ Trans'}
@@ -661,7 +687,7 @@ const EditorView = ({
                         {/* Show Accept/Cancel here if S->T preview is active */}
                         {isSTPending ? (
                           <div className="confirm-row">
-                            <button className="button primary" onClick={() => acceptRetranslation(segment.id)}>
+                            <button className="button primary" onClick={() => acceptRetranslation(segment.id)} disabled={isEditing || isSegmentBusy}>
                               <FiCheck />
                             </button>
                             <button className="button secondary" onClick={() => discardRetranslation(segment.id)}>
@@ -671,9 +697,9 @@ const EditorView = ({
                         ) : null}
 
                         <button
-                          className={`button secondary small ${redubbingId === segment.id ? 'muted' : ''}`}
+                          className={`button secondary small ${redubbingId === segment.id || isEditing || isSegmentBusy ? 'muted' : ''}`}
                           onClick={() => handleRedubSegment(segment)}
-                          disabled={retranslatingId === segment.id || changingLanguage || redubbing || redubbingId === segment.id}
+                          disabled={isEditing || isSegmentBusy}
                           title="Redub audio for this segment"
                         >
                           <FiShuffle />
@@ -693,7 +719,7 @@ const EditorView = ({
                         event.target.style.height = 'auto';
                         event.target.style.height = event.target.scrollHeight + 'px';
                       }}
-                      disabled={applying || changingLanguage || redubbing}
+                      disabled={isEditing || isSegmentBusy}
                       rows={1}
                     />
                     {isSTPending ? (
@@ -715,14 +741,14 @@ const EditorView = ({
             : "No pending changes"}
         </span>
         <button
-          className={`button primary ${!dirtySegments.length ? "muted" : ""}`}
-          disabled={!dirtySegments.length || applying || changingLanguage || redubbing}
+          className={`button primary ${!dirtySegments.length || isEditing ? "muted" : ""}`}
+          disabled={!dirtySegments.length || applying || changingLanguage || redubbing || isEditing}
           onClick={() => onApplyChanges(dirtySegments)}
         >
           {applying ? "Applying..." : "Apply Changes"}
         </button>
       </div>
-    </div>
+    </div >
   );
 };
 

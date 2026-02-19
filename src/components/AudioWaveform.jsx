@@ -29,7 +29,11 @@ const AudioWaveform = ({ audioUrl, onReady, onSelectionChange, timelineContainer
 
       try {
         const plugins = [];
-        if (RegionsPlugin) plugins.push(RegionsPlugin.create({ regionsRef }));
+        if (RegionsPlugin) {
+          const regions = RegionsPlugin.create();
+          regionsRef.current = regions;
+          plugins.push(regions);
+        }
         if (TimelinePlugin && timelineContainer) {
           const containerNode = typeof timelineContainer === 'string'
             ? document.querySelector(timelineContainer)
@@ -69,6 +73,10 @@ const AudioWaveform = ({ audioUrl, onReady, onSelectionChange, timelineContainer
         ws.on("ready", () => {
           if (!isMounted) return;
           isReadyRef.current = true;
+          // Expose regions plugin for parent access
+          if (regionsRef.current) {
+            ws.regions = regionsRef.current;
+          }
           // Apply initial zoom if provided
           if (zoom) {
             try { ws.zoom(zoom); } catch (e) { console.warn(e); }

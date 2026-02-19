@@ -34,32 +34,31 @@ const initialState = {
   changingLanguage: false,
   redubbing: false,
   targetLanguage: null,
-  isEditing: false
+  isEditing: false,
+  editingStatusText: null
 };
 
 export const editorReducer = (state = initialState, action) => {
   switch (action.type) {
     case EDITOR_LOAD_REQUEST:
-      return { ...state, loading: true, error: null, isEditing: true };
+      return { ...state, loading: true, error: null };
     case EDITOR_LOAD_SUCCESS:
       return {
         ...state,
         loading: false,
         error: null,
-        isEditing: false,
         video: action.payload.video,
         segments: action.payload.segments || [],
         videoId: action.payload.videoId || action.payload.video?.id,
-        jobId: action.payload.jobId || null,
+        jobId: action.payload.jobId || action.payload.video?.job_id || null,
         targetLanguage: action.payload.video?.target_language || state.targetLanguage
       };
     case EDITOR_LOAD_FAILURE:
-      return { ...state, loading: false, error: action.payload, isEditing: false };
+      return { ...state, loading: false, error: action.payload };
     case EDITOR_UPDATE_SEGMENT_REQUEST:
       return {
         ...state,
         error: null,
-        isEditing: true,
         updatingById: {
           ...state.updatingById,
           [action.payload]: true
@@ -68,7 +67,6 @@ export const editorReducer = (state = initialState, action) => {
     case EDITOR_UPDATE_SEGMENT_SUCCESS:
       return {
         ...state,
-        isEditing: false,
         segments: state.segments.map((segment) =>
           segment.id === action.payload.segmentId
             ? { ...segment, ...action.payload.updates }
@@ -82,7 +80,6 @@ export const editorReducer = (state = initialState, action) => {
     case EDITOR_UPDATE_SEGMENT_FAILURE:
       return {
         ...state,
-        isEditing: false,
         error: action.payload?.error || action.payload,
         updatingById: {
           ...state.updatingById,
@@ -90,51 +87,48 @@ export const editorReducer = (state = initialState, action) => {
         }
       };
     case EDITOR_APPLY_CHANGES_REQUEST:
-      return { ...state, applying: true, error: null, isEditing: true };
+      return { ...state, applying: true, error: null };
     case EDITOR_APPLY_CHANGES_SUCCESS:
       return {
         ...state,
         applying: false,
-        isEditing: false,
         segments: action.payload?.segments || state.segments
       };
     case EDITOR_APPLY_CHANGES_FAILURE:
-      return { ...state, applying: false, error: action.payload, isEditing: false };
+      return { ...state, applying: false, error: action.payload };
     case EDITOR_CHANGE_LANGUAGE_REQUEST:
-      return { ...state, changingLanguage: true, error: null, isEditing: true };
+      return { ...state, changingLanguage: true, error: null };
     case EDITOR_CHANGE_LANGUAGE_SUCCESS:
       return {
         ...state,
         changingLanguage: false,
-        isEditing: false,
         segments: action.payload?.segments || state.segments,
         targetLanguage: action.payload?.target_language || state.targetLanguage
       };
     case EDITOR_CHANGE_LANGUAGE_FAILURE:
-      return { ...state, changingLanguage: false, error: action.payload, isEditing: false };
+      return { ...state, changingLanguage: false, error: action.payload };
     case EDITOR_SET_TARGET_LANGUAGE:
       return { ...state, targetLanguage: action.payload };
     case EDITOR_REDUB_REQUEST:
-      return { ...state, redubbing: true, error: null, isEditing: true };
+      return { ...state, redubbing: true, error: null };
     case EDITOR_REDUB_SUCCESS:
-      return { ...state, redubbing: false, isEditing: false };
+      return { ...state, redubbing: false };
     case EDITOR_REDUB_FAILURE:
-      return { ...state, redubbing: false, error: action.payload, isEditing: false };
+      return { ...state, redubbing: false, error: action.payload };
     case EDITOR_DELETE_SEGMENT_REQUEST:
-      return { ...state, loading: true, isEditing: true };
+      return { ...state, loading: true };
     case EDITOR_DELETE_SEGMENT_SUCCESS:
       return {
         ...state,
         loading: false,
-        isEditing: false,
         segments: state.segments.filter(s => s.id !== action.payload)
       };
     case EDITOR_DELETE_SEGMENT_FAILURE:
-      return { ...state, loading: false, error: action.payload, isEditing: false };
+      return { ...state, loading: false, error: action.payload };
     case EDITOR_BUSY:
-      return { ...state, isEditing: true };
+      return { ...state, isEditing: true, editingStatusText: action.payload?.statusText || null };
     case EDITOR_IDLE:
-      return { ...state, isEditing: false };
+      return { ...state, isEditing: false, editingStatusText: null };
     default:
       return state;
   }

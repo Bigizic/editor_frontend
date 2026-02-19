@@ -35,7 +35,6 @@ export const mergeSegments = async (segmentIds) => {
   return response.data;
 };
 
-
 export const activateAudioTake = async (takeId) => {
   const response = await apiClient.post(`/editor/audio-takes/${takeId}/activate`);
   return response.data;
@@ -147,6 +146,14 @@ export const normalizeDubbedAudio = async (videoId, options = {}) => {
   return response.data;
 };
 
+export const silenceVideoRange = async (videoId, startMs, endMs) => {
+  const response = await apiClient.post(
+    `/editor/videos/${videoId}/silence`,
+    { start_ms: startMs, end_ms: endMs }
+  );
+  return response.data;
+};
+
 // Volume gains (remix without redub)
 export const updateVideoGains = async (videoId, { dialogue_gain, background_gain }) => {
   const body = {};
@@ -158,5 +165,36 @@ export const updateVideoGains = async (videoId, { dialogue_gain, background_gain
 
 export const remixDubbedAudio = async (videoId) => {
   const response = await apiClient.post(`/editor/videos/${videoId}/remix`);
+  return response.data;
+};
+
+export const manualMoveRedubSegment = async (segmentId, body) => {
+  const response = await apiClient.post(`/editor/segment/${segmentId}/manual-move-redub`, {
+    prev_segment_start_ms: body?.prev_segment_start_ms ? body.prev_segment_start_ms : '',
+    prev_segment_end_ms: body?.prev_segment_end_ms ? body.prev_segment_end_ms : '',
+  });
+  return response.data;
+}
+
+export const manualStretchRedubSegment = async (segmentId, payload) => {
+  const response = await apiClient.post(`/editor/segment/${segmentId}/manual-stretch-redub`, payload);
+  return response.data;
+}
+
+// ---- Editor Notifications ------------------------------------------------
+
+export const fetchEditorNotificationsApi = async (jobId, userId) => {
+  const response = await apiClient.get(`/editor/notifications/${jobId}`, {
+    params: { user_id: userId },
+  });
+  return response.data;
+};
+
+export const markEditorNotificationReadApi = async (notificationId, readStatus = "read") => {
+  const response = await apiClient.patch(
+    `/editor/notifications/${notificationId}/read`,
+    null,
+    { params: { read_status: readStatus } }
+  );
   return response.data;
 };

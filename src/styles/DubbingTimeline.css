@@ -18,6 +18,34 @@
   user-select: none;
 }
 
+/* Top horizontal scrollbar for timeline */
+.timeline-top-scrollbar {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  height: 14px;
+  flex-shrink: 0;
+  background: var(--editor-bg-subtle, #f8f9fa);
+  border-bottom: 1px solid var(--editor-border-light, #e2e8f0);
+}
+
+.timeline-top-scrollbar::-webkit-scrollbar {
+  height: 8px;
+}
+
+.timeline-top-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.timeline-top-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.35);
+  border-radius: 4px;
+}
+
+.timeline-top-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.55);
+}
+
 .dubbing-timeline {
   display: flex;
   flex-direction: row;
@@ -289,7 +317,7 @@
 /* Track Lane styling matching Sidebar height */
 .track-lane {
   position: relative;
-  height: 80px;
+  height: 60px;
   /* Match sidebar-track height */
   border-bottom: 1px solid var(--editor-border);
   /* Demarcation line */
@@ -304,7 +332,7 @@
 }
 
 .track-lane.background-track {
-  height: 60px;
+  height: 50px;
   /* Match sidebar background track */
   border-bottom: 1px solid var(--editor-border);
   background: #f8fafc;
@@ -318,7 +346,7 @@
   /* Top row */
   border-radius: 6px;
   padding: 0 8px;
-  overflow: hidden;
+  overflow: visible;
   display: flex;
   align-items: center;
   font-size: 10px;
@@ -326,13 +354,19 @@
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
   border: 1px solid rgba(0, 0, 0, 0.05);
   cursor: pointer;
-  transition: transform 0.1s;
+  transition: transform 0.1s, box-shadow 0.15s, border-color 0.15s;
 }
 
 .segment-clip:hover {
   transform: translateY(-1px);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
   z-index: 5;
+}
+
+.segment-clip.selected {
+  border-color: rgba(0, 0, 0, 0.25);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.35), 0 2px 6px rgba(0, 0, 0, 0.15);
+  z-index: 6;
 }
 
 /* Only Dubbed segments shown now, moved to top row */
@@ -357,6 +391,54 @@
 .segment-text {
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+  padding: 0 4px;
+}
+
+/* ── TRIM HANDLES ── */
+.trim-handle {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 10px;
+  cursor: col-resize;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+  border-radius: 3px;
+}
+
+.trim-handle-left {
+  left: -4px;
+}
+
+.trim-handle-right {
+  right: -4px;
+}
+
+/* Show handles on hover or selection */
+.segment-clip:hover .trim-handle,
+.segment-clip.selected .trim-handle,
+.segment-clip.dragging .trim-handle {
+  opacity: 1;
+}
+
+.trim-handle:hover {
+  background: rgba(0, 0, 0, 0.15);
+}
+
+/* Grip dots inside handle */
+.trim-grip {
+  display: block;
+  width: 3px;
+  height: 14px;
+  border-left: 1px solid rgba(0, 0, 0, 0.3);
+  border-right: 1px solid rgba(0, 0, 0, 0.3);
 }
 
 
@@ -421,4 +503,63 @@
 
 .scrub-overlay.active {
   display: block;
+}
+
+/* WaveSurfer Regions Styling */
+/* WaveSurfer Regions Styling */
+.wavesurfer-region {
+  border: 1px solid rgba(239, 68, 68, 0.6) !important;
+  /* Red-500 */
+  z-index: 10 !important;
+  background-color: rgba(239, 68, 68, 0.1) !important;
+}
+
+.wavesurfer-handle {
+  background-color: transparent !important;
+  width: 24px !important;
+  max-width: 24px !important;
+  opacity: 1 !important;
+  cursor: col-resize !important;
+  z-index: 15 !important;
+}
+
+/* Create the visual "Trim Thing" (Grip Handle) */
+.wavesurfer-handle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 6px;
+  height: 24px;
+  background-color: #ef4444;
+  /* Red-500 */
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+}
+
+/* Vertical line indicator */
+.wavesurfer-handle::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background-color: rgba(239, 68, 68, 0.5);
+  transform: translateX(-0.5px);
+}
+
+/* Mute dubbed audio segment tracks when an editor action is running */
+.track-lane.track-editing-muted {
+  opacity: 0.4;
+  filter: grayscale(40%);
+  pointer-events: none;
+  transition: opacity 0.25s ease, filter 0.25s ease;
+}
+
+.track-lane.track-editing-muted .segment-clip {
+  box-shadow: none;
+  border-color: rgba(0, 0, 0, 0.08);
 }

@@ -2,9 +2,10 @@ import { useRef, useEffect, useState, useCallback } from 'react';
 import { createSocket } from './provider';
 import SocketContext from './context';
 import useSocket from './useSocket';
+import { resubscribeStoredJobs } from '../helpers/jobSubscriptionHelpers';
+import { getActiveJobStorageKey, getActiveEditorJobStorageKey } from '../helpers/storageKeys';
 
 const DEFAULT_USER_ID = '111';
-const ACTIVE_JOB_STORAGE_KEY = `dubbing_active_job_${DEFAULT_USER_ID}`;
 
 const SocketProvider = ({ children }) => {
   const socketRef = useRef(null);
@@ -33,8 +34,10 @@ const SocketProvider = ({ children }) => {
 
     const subscribeStored = () => {
       subscribeToJobs([]);
-      const stored = localStorage.getItem(ACTIVE_JOB_STORAGE_KEY);
-      if (stored) subscribeToJobs([stored]);
+      resubscribeStoredJobs(
+        [getActiveJobStorageKey(DEFAULT_USER_ID), getActiveEditorJobStorageKey(DEFAULT_USER_ID)],
+        subscribeToJobs
+      );
     };
 
     sock.on("connect", () => {

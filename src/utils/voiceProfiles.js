@@ -15,7 +15,8 @@ export const VOICE_PROFILES = {
     "Ethan",
     "Liam",
     "Noah",
-    "William"
+    "William",
+    "NZ"
   ],
   female: [
     "Rachel",
@@ -30,7 +31,8 @@ export const VOICE_PROFILES = {
     "Emma",
     "Ava",
     "Sophia",
-    "Amelia"
+    "Amelia",
+    "Olufunmilola"
   ],
   neutral: [
     "Alex",
@@ -59,7 +61,9 @@ export const ELEVENLABS_PROFILE_IDS = {
   Alex: "29vD33N1CtxCmqQRPOHJ",
   Aaron: "g5CIjZEefAph4nQFvHAz",
   George: "JBFqnCBsd6RMkjVDRZzb",
-  Josh: "TxGEqnHWrfWFTfGW9XjX"
+  Josh: "TxGEqnHWrfWFTfGW9XjX",
+  Olufunmilola: "9Dbo4hEvXQ5l7MXGZFQA",
+  NZ: "gsyHQ9kWCDIipR26RqQ1"
 };
 
 const ID_TO_NAME = Object.fromEntries(

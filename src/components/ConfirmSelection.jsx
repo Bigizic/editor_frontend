@@ -1,5 +1,5 @@
 import React from 'react';
-import { FiX, FiCheck, FiAlertTriangle } from 'react-icons/fi';
+import { FiX, FiCheck, FiAlertTriangle, FiCheckCircle, FiInfo } from 'react-icons/fi';
 
 const ConfirmSelection = ({
   isOpen,
@@ -11,9 +11,13 @@ const ConfirmSelection = ({
   confirmText = "Done",
   cancelText = "Cancel",
   isAlert = false,
+  variant = 'info', // 'success', 'warning', 'error', 'info'
   theme = "light"
 }) => {
   if (!isOpen) return null;
+
+  // Backward compatibility: isAlert implies warning ONLY IF variant is default 'info'
+  const effectiveVariant = (isAlert && variant === 'info') ? 'warning' : variant;
 
   // Determine styles based on theme if needed, but CSS vars handle most
   const isDark = theme === "dark";
@@ -111,7 +115,10 @@ const ConfirmSelection = ({
         onClick={e => e.stopPropagation()}
       >
         <h3 style={titleStyle}>
-          {isAlert && <FiAlertTriangle color="#f59e0b" />}
+          {effectiveVariant === 'warning' && <FiAlertTriangle color="#f59e0b" />}
+          {effectiveVariant === 'error' && <FiAlertTriangle color="#ef4444" />}
+          {effectiveVariant === 'success' && <FiCheckCircle color="#10b981" />}
+          {effectiveVariant === 'info' && <FiInfo color="#3b82f6" />}
           {title}
         </h3>
 
